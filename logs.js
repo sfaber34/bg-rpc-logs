@@ -5,7 +5,7 @@ const http = require('http');
 const { parseInterval } = require('./config');
 const { logPort } = require('./config');
 
-const fallbackRequestsLog = new Map();
+const fallbackRequestsMap = new Map();
 
 // Read and parse the fallback requests log file
 const logFilePath = path.join(__dirname, '../shared/fallbackRequests.log');
@@ -20,8 +20,8 @@ function parseLogFile() {
             const [timestamp, epoch, requester, method, params, elapsed, status] = line.split('|');
             
             // Only add entries that aren't already in the map
-            if (!fallbackRequestsLog.has(epoch)) {
-                fallbackRequestsLog.set(epoch, {
+            if (!fallbackRequestsMap.has(epoch)) {
+                fallbackRequestsMap.set(epoch, {
                     timestamp,
                     epoch,
                     requester: requester || '',
@@ -35,7 +35,7 @@ function parseLogFile() {
         });
         
         if (newEntriesCount > 0) {
-            console.log(`Added ${newEntriesCount} new entries. Total entries: ${fallbackRequestsLog.size}`);
+            console.log(`Added ${newEntriesCount} new entries. Total entries: ${fallbackRequestsMap.size}`);
         }
     } catch (error) {
         console.error('Error parsing fallback requests log:', error);
@@ -44,8 +44,8 @@ function parseLogFile() {
 
 function getMapContents() {
   return {
-      size: fallbackRequestsLog.size,
-      entries: Array.from(fallbackRequestsLog.entries()).map(([epoch, entry]) => ({
+      size: fallbackRequestsMap.size,
+      entries: Array.from(fallbackRequestsMap.entries()).map(([epoch, entry]) => ({
           epoch,
           ...entry
       }))
@@ -64,7 +64,9 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(logPort, () => {
-    console.log(`Logs server running at http://localhost:${logPort}`);
+  console.log("----------------------------------------------------------------------------------------------------------------");
+  console.log("----------------------------------------------------------------------------------------------------------------");
+  console.log(`Logs server running at http://localhost:${logPort}`);
 });
 
 // Start the log parsing
