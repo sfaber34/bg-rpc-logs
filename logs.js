@@ -10,16 +10,6 @@ const fallbackRequestsLog = new Map();
 // Read and parse the fallback requests log file
 const logFilePath = path.join(__dirname, '../shared/fallbackRequests.log');
 
-function getMapContents() {
-    return {
-        size: fallbackRequestsLog.size,
-        entries: Array.from(fallbackRequestsLog.entries()).map(([epoch, entry]) => ({
-            epoch,
-            ...entry
-        }))
-    };
-}
-
 function parseLogFile() {
     try {
         const fileContent = fs.readFileSync(logFilePath, 'utf8');
@@ -52,6 +42,16 @@ function parseLogFile() {
     }
 }
 
+function getMapContents() {
+  return {
+      size: fallbackRequestsLog.size,
+      entries: Array.from(fallbackRequestsLog.entries()).map(([epoch, entry]) => ({
+          epoch,
+          ...entry
+      }))
+  };
+}
+
 // Create HTTP server to serve map contents
 const server = http.createServer((req, res) => {
     if (req.url === '/map') {
@@ -64,7 +64,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(logPort, () => {
-    console.log(`Server running at http://localhost:${logPort}`);
+    console.log(`Logs server running at http://localhost:${logPort}`);
 });
 
 // Start the log parsing
