@@ -1,9 +1,11 @@
 const http = require('http');
 
+const { logPort } = require('./config');
+
 function displayLogMap() {
     const options = {
         hostname: 'localhost',
-        port: 3001,
+        port: logPort,
         path: '/map',
         method: 'GET'
     };

@@ -1,8 +1,11 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
-const { fallbackRequestsLog } = require('../shared/globalMem');
+
 const { parseInterval } = require('./config');
+const { logPort } = require('./config');
+
+const fallbackRequestsLog = new Map();
 
 // Read and parse the fallback requests log file
 const logFilePath = path.join(__dirname, '../shared/fallbackRequests.log');
@@ -60,9 +63,8 @@ const server = http.createServer((req, res) => {
     }
 });
 
-const PORT = 3001;
-server.listen(PORT, () => {
-    console.log(`Server running at http://localhost:${PORT}`);
+server.listen(logPort, () => {
+    console.log(`Server running at http://localhost:${logPort}`);
 });
 
 // Start the log parsing
