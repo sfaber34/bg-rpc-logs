@@ -1,0 +1,11 @@
+{
+  "name": "bg-rpc-logs",
+  "version": "1.0.0",
+  "description": "RPC logs management system",
+  "main": "logs.js",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "node logs.js"
+  }
+} 
