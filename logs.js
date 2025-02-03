@@ -43,24 +43,16 @@ function parseLogFile() {
 }
 
 function getMapContents() {
-  return {
-      size: fallbackRequestsMap.size,
-      entries: Array.from(fallbackRequestsMap.entries()).map(([epoch, entry]) => ({
-          epoch,
-          ...entry
-      }))
-  };
+  return Array.from(fallbackRequestsMap.entries()).map(([epoch, entry]) => ({
+      epoch,
+      ...entry
+  }));
 }
 
 // Create HTTP server to serve map contents
 const server = http.createServer((req, res) => {
-    if (req.url === '/map') {
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify(getMapContents(), null, 2));
-    } else {
-        res.statusCode = 404;
-        res.end('Not found');
-    }
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(getMapContents(), null, 2));
 });
 
 server.listen(logPort, () => {
