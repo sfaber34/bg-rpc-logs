@@ -6,13 +6,15 @@ const { parseInterval } = require('./config');
 const { logPort } = require('./config');
 
 const fallbackRequestsMap = new Map();
+const cacheRequestsMap = new Map();
 
 // Read and parse the fallback requests log file
-const logFilePath = path.join(__dirname, '../shared/fallbackRequests.log');
+const fallbackLogPath = path.join(__dirname, '../shared/fallbackRequests.log');
+const cacheLogPath = path.join(__dirname, '../shared/cacheRequests.log');
 
-function parseLogFile() {
+function parseLogFile(logPath, targetMap) {
     try {
-        const fileContent = fs.readFileSync(logFilePath, 'utf8');
+        const fileContent = fs.readFileSync(logPath, 'utf8');
         const lines = fileContent.trim().split('\n');
         let newEntriesCount = 0;
         
@@ -20,8 +22,8 @@ function parseLogFile() {
             const [timestamp, epoch, requester, method, params, elapsed, status] = line.split('|');
             
             // Only add entries that aren't already in the map
-            if (!fallbackRequestsMap.has(epoch)) {
-                fallbackRequestsMap.set(epoch, {
+            if (!targetMap.has(epoch)) {
+                targetMap.set(epoch, {
                     timestamp,
                     epoch,
                     requester: requester || '',
@@ -35,15 +37,17 @@ function parseLogFile() {
         });
         
         if (newEntriesCount > 0) {
-            console.log(`Added ${newEntriesCount} new entries. Total entries: ${fallbackRequestsMap.size}`);
+            const mapName = targetMap === fallbackRequestsMap ? 'fallbackRequestsMap' : 'cacheRequestsMap';
+            console.log(`Added ${newEntriesCount} new entries to ${mapName}. Total entries: ${targetMap.size}`);
         }
     } catch (error) {
-        console.error('Error parsing fallback requests log:', error);
+        const mapName = targetMap === fallbackRequestsMap ? 'fallbackRequestsMap' : 'cacheRequestsMap';
+        console.error(`Error parsing ${mapName} log file:`, error);
     }
 }
 
-function getMapContents() {
-  return Array.from(fallbackRequestsMap.entries()).map(([epoch, entry]) => ({
+function getMapContents(targetMap) {
+  return Array.from(targetMap.entries()).map(([epoch, entry]) => ({
       epoch,
       ...entry
   }));
@@ -52,15 +56,30 @@ function getMapContents() {
 // Create HTTP server to serve map contents
 const server = http.createServer((req, res) => {
     res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify(getMapContents(), null, 2));
+    
+    if (req.url === '/fallbackRequests') {
+        res.end(JSON.stringify(getMapContents(fallbackRequestsMap), null, 2));
+    } else if (req.url === '/cacheRequests') {
+        res.end(JSON.stringify(getMapContents(cacheRequestsMap), null, 2));
+    } else {
+        res.statusCode = 404;
+        res.end(JSON.stringify({ error: 'Not found' }));
+    }
 });
 
 server.listen(logPort, () => {
-  console.log("----------------------------------------------------------------------------------------------------------------");
-  console.log("----------------------------------------------------------------------------------------------------------------");
-  console.log(`Logs server running at http://localhost:${logPort}`);
+    console.log("----------------------------------------------------------------------------------------------------------------");
+    console.log("----------------------------------------------------------------------------------------------------------------");
+    console.log(`Logs server running at http://localhost:${logPort}`);
+    console.log(`Available endpoints:`);
+    console.log(`- http://localhost:${logPort}/fallbackRequests`);
+    console.log(`- http://localhost:${logPort}/cacheRequests`);
 });
 
-// Start the log parsing
-parseLogFile();
-setInterval(parseLogFile, parseInterval);
+// Start the log parsing for both fallback and cache logs
+parseLogFile(fallbackLogPath, fallbackRequestsMap);
+parseLogFile(cacheLogPath, cacheRequestsMap);
+setInterval(() => {
+    parseLogFile(fallbackLogPath, fallbackRequestsMap);
+    parseLogFile(cacheLogPath, cacheRequestsMap);
+}, parseInterval);
