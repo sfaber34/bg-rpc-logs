@@ -53,6 +53,43 @@ function getMapContents(targetMap) {
   }));
 }
 
+function getDashboardMetrics() {
+    const oneHourAgo = Date.now() - (60 * 60 * 1000); // 1 hour in milliseconds
+    
+    let nFallbackRequestsLastHour = 0;
+    let nErrorFallbackRequestsLastHour = 0;
+    let nCacheRequestsLastHour = 0;
+    let nErrorCacheRequestsLastHour = 0;
+    
+    // Count fallback requests
+    fallbackRequestsMap.forEach(entry => {
+        if (parseInt(entry.epoch) >= oneHourAgo) {
+            nFallbackRequestsLastHour++;
+            if (entry.status !== 'success') {
+                nErrorFallbackRequestsLastHour++;
+            }
+        }
+    });
+    
+    // Count cache requests
+    cacheRequestsMap.forEach(entry => {
+        if (parseInt(entry.epoch) >= oneHourAgo) {
+            nCacheRequestsLastHour++;
+            if (entry.status !== 'success') {
+                nErrorCacheRequestsLastHour++;
+            }
+        }
+    });
+    
+    return {
+        nTotalRequestsLastHour: nFallbackRequestsLastHour + nCacheRequestsLastHour,
+        nFallbackRequestsLastHour,
+        nCacheRequestsLastHour,
+        nErrorFallbackRequestsLastHour,
+        nErrorCacheRequestsLastHour
+    };
+}
+
 // Create HTTP server to serve map contents
 const server = http.createServer((req, res) => {
     res.setHeader('Content-Type', 'application/json');
@@ -61,6 +98,8 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify(getMapContents(fallbackRequestsMap), null, 2));
     } else if (req.url === '/cacheRequests') {
         res.end(JSON.stringify(getMapContents(cacheRequestsMap), null, 2));
+    } else if (req.url === '/dashboard') {
+        res.end(JSON.stringify(getDashboardMetrics(), null, 2));
     } else {
         res.statusCode = 404;
         res.end(JSON.stringify({ error: 'Not found' }));
@@ -71,9 +110,6 @@ server.listen(logPort, () => {
     console.log("----------------------------------------------------------------------------------------------------------------");
     console.log("----------------------------------------------------------------------------------------------------------------");
     console.log(`Logs server running at http://localhost:${logPort}`);
-    console.log(`Available endpoints:`);
-    console.log(`- http://localhost:${logPort}/fallbackRequests`);
-    console.log(`- http://localhost:${logPort}/cacheRequests`);
 });
 
 // Start the log parsing for both fallback and cache logs
