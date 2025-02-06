@@ -60,11 +60,14 @@ function getDashboardMetrics() {
     let nErrorFallbackRequestsLastHour = 0;
     let nCacheRequestsLastHour = 0;
     let nErrorCacheRequestsLastHour = 0;
+    let totalFallbackTime = 0;
+    let totalCacheTime = 0;
     
     // Count fallback requests
     fallbackRequestsMap.forEach(entry => {
         if (parseInt(entry.epoch) >= oneHourAgo) {
             nFallbackRequestsLastHour++;
+            totalFallbackTime += entry.elapsed;
             if (entry.status !== 'success') {
                 nErrorFallbackRequestsLastHour++;
             }
@@ -75,18 +78,24 @@ function getDashboardMetrics() {
     cacheRequestsMap.forEach(entry => {
         if (parseInt(entry.epoch) >= oneHourAgo) {
             nCacheRequestsLastHour++;
+            totalCacheTime += entry.elapsed;
             if (entry.status !== 'success') {
                 nErrorCacheRequestsLastHour++;
             }
         }
     });
     
+    const aveFallbackRequestTimeLastHour = nFallbackRequestsLastHour > 0 ? totalFallbackTime / nFallbackRequestsLastHour : 0;
+    const aveCacheRequestTimeLastHour = nCacheRequestsLastHour > 0 ? totalCacheTime / nCacheRequestsLastHour : 0;
+    
     return {
         nTotalRequestsLastHour: nFallbackRequestsLastHour + nCacheRequestsLastHour,
         nFallbackRequestsLastHour,
         nCacheRequestsLastHour,
         nErrorFallbackRequestsLastHour,
-        nErrorCacheRequestsLastHour
+        nErrorCacheRequestsLastHour,
+        aveFallbackRequestTimeLastHour,
+        aveCacheRequestTimeLastHour
     };
 }
 
