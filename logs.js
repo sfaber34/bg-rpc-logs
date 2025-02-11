@@ -62,8 +62,11 @@ function getDashboardMetrics() {
     let nErrorFallbackRequestsLastHour = 0;
     let nCacheRequestsLastHour = 0;
     let nErrorCacheRequestsLastHour = 0;
+    let nPoolRequestsLastHour = 0;
+    let nErrorPoolRequestsLastHour = 0;
     let totalFallbackTime = 0;
     let totalCacheTime = 0;
+    let totalPoolTime = 0;
     
     // Count fallback requests
     fallbackRequestsMap.forEach(entry => {
@@ -86,18 +89,33 @@ function getDashboardMetrics() {
             }
         }
     });
+
+    // Count pool requests
+    poolRequestsMap.forEach(entry => {
+        if (parseInt(entry.epoch) >= oneHourAgo) {
+            nPoolRequestsLastHour++;
+            totalPoolTime += entry.elapsed;
+            if (entry.status !== 'success') {
+                nErrorPoolRequestsLastHour++;
+            }
+        }
+    });
     
     const aveFallbackRequestTimeLastHour = nFallbackRequestsLastHour > 0 ? totalFallbackTime / nFallbackRequestsLastHour : 0;
     const aveCacheRequestTimeLastHour = nCacheRequestsLastHour > 0 ? totalCacheTime / nCacheRequestsLastHour : 0;
+    const avePoolRequestTimeLastHour = nPoolRequestsLastHour > 0 ? totalPoolTime / nPoolRequestsLastHour : 0;
     
     return {
-        nTotalRequestsLastHour: nFallbackRequestsLastHour + nCacheRequestsLastHour,
+        nTotalRequestsLastHour: nFallbackRequestsLastHour + nCacheRequestsLastHour + nPoolRequestsLastHour,
         nFallbackRequestsLastHour,
         nCacheRequestsLastHour,
+        nPoolRequestsLastHour,
         nErrorFallbackRequestsLastHour,
         nErrorCacheRequestsLastHour,
+        nErrorPoolRequestsLastHour,
         aveFallbackRequestTimeLastHour,
-        aveCacheRequestTimeLastHour
+        aveCacheRequestTimeLastHour,
+        avePoolRequestTimeLastHour
     };
 }
 
