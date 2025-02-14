@@ -14,6 +14,9 @@ const fallbackLogPath = path.join(__dirname, '../shared/fallbackRequests.log');
 const cacheLogPath = path.join(__dirname, '../shared/cacheRequests.log');
 const poolLogPath = path.join(__dirname, '../shared/poolRequests.log');
 
+// Cache object for dashboard metrics
+let cachedDashboardMetrics = null;
+
 function parseLogFile(logPath, targetMap) {
     try {
         const fileContent = fs.readFileSync(logPath, 'utf8');
@@ -106,6 +109,7 @@ function getDashboardMetrics() {
     const avePoolRequestTimeLastHour = nPoolRequestsLastHour > 0 ? totalPoolTime / nPoolRequestsLastHour : 0;
     
     return {
+        timestamp: Date.now(),
         nTotalRequestsLastHour: nFallbackRequestsLastHour + nCacheRequestsLastHour + nPoolRequestsLastHour,
         nFallbackRequestsLastHour,
         nCacheRequestsLastHour,
@@ -119,6 +123,15 @@ function getDashboardMetrics() {
     };
 }
 
+// Function to update cached metrics
+function updateCachedMetrics() {
+    cachedDashboardMetrics = getDashboardMetrics();
+}
+
+// Initialize metrics cache and set up regular updates
+updateCachedMetrics();
+setInterval(updateCachedMetrics, 10000); // Update every 10 seconds
+
 // Create HTTP server to serve map contents
 const server = http.createServer((req, res) => {
     res.setHeader('Content-Type', 'application/json');
@@ -130,7 +143,7 @@ const server = http.createServer((req, res) => {
     } else if (req.url === '/poolRequests') {
         res.end(JSON.stringify(getMapContents(poolRequestsMap), null, 2));
     } else if (req.url === '/dashboard') {
-        res.end(JSON.stringify(getDashboardMetrics(), null, 2));
+        res.end(JSON.stringify(cachedDashboardMetrics, null, 2));
     } else {
         res.statusCode = 404;
         res.end(JSON.stringify({ error: 'Not found' }));
