@@ -17,6 +17,22 @@ const poolLogPath = path.join(__dirname, '../shared/poolRequests.log');
 // Cache object for dashboard metrics
 let cachedDashboardMetrics = null;
 
+// Helper function to calculate percentiles
+function calculatePercentiles(values, percentiles) {
+    if (values.length === 0) return {};
+    
+    // Sort values in ascending order
+    values.sort((a, b) => a - b);
+    
+    const results = {};
+    percentiles.forEach(p => {
+        const index = Math.ceil((p/100) * values.length) - 1;
+        results[`p${p}`] = values[index];
+    });
+    
+    return results;
+}
+
 function parseLogFile(logPath, targetMap) {
     try {
         const fileContent = fs.readFileSync(logPath, 'utf8');
@@ -71,7 +87,28 @@ function getDashboardMetrics() {
     let totalCacheTime = 0;
     let totalPoolTime = 0;
     
-    // Count fallback requests
+    // Object to store method-based and origin-based times
+    const methodTimes = {};
+    const originTimes = {};
+    
+    // Helper function to process entries for method times
+    const processEntryForMethodTimes = (entry) => {
+        if (parseInt(entry.epoch) >= oneHourAgo) {
+            if (!methodTimes[entry.method]) {
+                methodTimes[entry.method] = [];
+            }
+            methodTimes[entry.method].push(entry.elapsed);
+
+            // Process origin times
+            const origin = entry.requester || 'N/A';
+            if (!originTimes[origin]) {
+                originTimes[origin] = [];
+            }
+            originTimes[origin].push(entry.elapsed);
+        }
+    };
+    
+    // Count fallback requests and collect method times
     fallbackRequestsMap.forEach(entry => {
         if (parseInt(entry.epoch) >= oneHourAgo) {
             nFallbackRequestsLastHour++;
@@ -79,10 +116,11 @@ function getDashboardMetrics() {
             if (entry.status !== 'success') {
                 nErrorFallbackRequestsLastHour++;
             }
+            processEntryForMethodTimes(entry);
         }
     });
     
-    // Count cache requests
+    // Count cache requests and collect method times
     cacheRequestsMap.forEach(entry => {
         if (parseInt(entry.epoch) >= oneHourAgo) {
             nCacheRequestsLastHour++;
@@ -90,10 +128,11 @@ function getDashboardMetrics() {
             if (entry.status !== 'success') {
                 nErrorCacheRequestsLastHour++;
             }
+            processEntryForMethodTimes(entry);
         }
     });
 
-    // Count pool requests
+    // Count pool requests and collect method times
     poolRequestsMap.forEach(entry => {
         if (parseInt(entry.epoch) >= oneHourAgo) {
             nPoolRequestsLastHour++;
@@ -101,7 +140,19 @@ function getDashboardMetrics() {
             if (entry.status !== 'success') {
                 nErrorPoolRequestsLastHour++;
             }
+            processEntryForMethodTimes(entry);
         }
+    });
+    
+    // Calculate percentiles for each method and origin
+    const methodDurationHist = {};
+    Object.entries(methodTimes).forEach(([method, times]) => {
+        methodDurationHist[method] = calculatePercentiles(times, [1, 25, 50, 75, 99]);
+    });
+
+    const originDurationHist = {};
+    Object.entries(originTimes).forEach(([origin, times]) => {
+        originDurationHist[origin] = calculatePercentiles(times, [1, 25, 50, 75, 99]);
     });
     
     const aveFallbackRequestTimeLastHour = nFallbackRequestsLastHour > 0 ? totalFallbackTime / nFallbackRequestsLastHour : 0;
@@ -119,18 +170,11 @@ function getDashboardMetrics() {
         nErrorPoolRequestsLastHour,
         aveFallbackRequestTimeLastHour,
         aveCacheRequestTimeLastHour,
-        avePoolRequestTimeLastHour
+        avePoolRequestTimeLastHour,
+        methodDurationHist,
+        originDurationHist
     };
 }
-
-// Function to update cached metrics
-function updateCachedMetrics() {
-    cachedDashboardMetrics = getDashboardMetrics();
-}
-
-// Initialize metrics cache and set up regular updates
-updateCachedMetrics();
-setInterval(updateCachedMetrics, 10000); // Update every 10 seconds
 
 // Create HTTP server to serve map contents
 const server = http.createServer((req, res) => {
@@ -156,12 +200,19 @@ server.listen(logPort, () => {
     console.log(`Logs server running at http://localhost:${logPort}`);
 });
 
-// Start the log parsing for both fallback and cache logs
+// Function to update cached metrics
+function updateCachedMetrics() {
+    cachedDashboardMetrics = getDashboardMetrics();
+}
+
 parseLogFile(fallbackLogPath, fallbackRequestsMap);
 parseLogFile(cacheLogPath, cacheRequestsMap);
 parseLogFile(poolLogPath, poolRequestsMap);
+updateCachedMetrics();
+
 setInterval(() => {
     parseLogFile(fallbackLogPath, fallbackRequestsMap);
     parseLogFile(cacheLogPath, cacheRequestsMap);
     parseLogFile(poolLogPath, poolRequestsMap);
+    updateCachedMetrics();
 }, parseInterval);
