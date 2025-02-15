@@ -87,64 +87,71 @@ function getDashboardMetrics() {
     let totalCacheTime = 0;
     let totalPoolTime = 0;
     
-    // Object to store method-based and origin-based times
+    // Object to store method-based and origin-based times for ALL requests
     const methodTimes = {};
     const originTimes = {};
     
-    // Helper function to process entries for method times
+    // Helper function to process entries for method times - now processes ALL entries
     const processEntryForMethodTimes = (entry) => {
-        if (parseInt(entry.epoch) >= oneHourAgo) {
-            if (!methodTimes[entry.method]) {
-                methodTimes[entry.method] = [];
-            }
-            methodTimes[entry.method].push(entry.elapsed);
-
-            // Process origin times
-            const origin = entry.requester || 'N/A';
-            if (!originTimes[origin]) {
-                originTimes[origin] = [];
-            }
-            originTimes[origin].push(entry.elapsed);
+        if (!methodTimes[entry.method]) {
+            methodTimes[entry.method] = [];
         }
+        methodTimes[entry.method].push(entry.elapsed);
+
+        // Process origin times
+        const origin = entry.requester || 'N/A';
+        if (!originTimes[origin]) {
+            originTimes[origin] = [];
+        }
+        originTimes[origin].push(entry.elapsed);
     };
     
-    // Count fallback requests and collect method times
+    // Process fallback requests
     fallbackRequestsMap.forEach(entry => {
+        // Process ALL entries for histograms
+        processEntryForMethodTimes(entry);
+        
+        // Only count last hour stats for hourly metrics
         if (parseInt(entry.epoch) >= oneHourAgo) {
             nFallbackRequestsLastHour++;
             totalFallbackTime += entry.elapsed;
             if (entry.status !== 'success') {
                 nErrorFallbackRequestsLastHour++;
             }
-            processEntryForMethodTimes(entry);
         }
     });
     
-    // Count cache requests and collect method times
+    // Process cache requests
     cacheRequestsMap.forEach(entry => {
+        // Process ALL entries for histograms
+        processEntryForMethodTimes(entry);
+        
+        // Only count last hour stats for hourly metrics
         if (parseInt(entry.epoch) >= oneHourAgo) {
             nCacheRequestsLastHour++;
             totalCacheTime += entry.elapsed;
             if (entry.status !== 'success') {
                 nErrorCacheRequestsLastHour++;
             }
-            processEntryForMethodTimes(entry);
         }
     });
 
-    // Count pool requests and collect method times
+    // Process pool requests
     poolRequestsMap.forEach(entry => {
+        // Process ALL entries for histograms
+        processEntryForMethodTimes(entry);
+        
+        // Only count last hour stats for hourly metrics
         if (parseInt(entry.epoch) >= oneHourAgo) {
             nPoolRequestsLastHour++;
             totalPoolTime += entry.elapsed;
             if (entry.status !== 'success') {
                 nErrorPoolRequestsLastHour++;
             }
-            processEntryForMethodTimes(entry);
         }
     });
     
-    // Calculate percentiles for each method and origin
+    // Calculate percentiles for each method and origin using ALL data
     const methodDurationHist = {};
     Object.entries(methodTimes).forEach(([method, times]) => {
         methodDurationHist[method] = calculatePercentiles(times, [1, 25, 50, 75, 99]);
