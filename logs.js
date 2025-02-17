@@ -311,21 +311,20 @@ parsePoolNodeLog(poolNodesLogPath, poolNodesMap);
 updateRequestHistory(); // Initial history calculation
 updateCachedMetrics();
 
-// Calculate time until next hour
-const now = new Date();
-const nextHour = new Date(now);
-nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
-const timeUntilNextHour = nextHour - now;
-
-// Schedule request history updates to run at the start of each hour
-setTimeout(() => {
-    updateRequestHistory();
-    // Then schedule recurring updates every hour
-    setInterval(updateRequestHistory, 60 * 60 * 1000);
-}, timeUntilNextHour);
+// Track the last hour we processed to detect hour changes
+let lastProcessedHour = new Date().getHours();
 
 // Keep regular dashboard metrics updates at current interval
 setInterval(() => {
+    const currentHour = new Date().getHours();
+    
+    // Check if we've crossed an hour boundary
+    if (currentHour !== lastProcessedHour) {
+        console.log(`Hour changed from ${lastProcessedHour} to ${currentHour}, updating request history...`);
+        updateRequestHistory();
+        lastProcessedHour = currentHour;
+    }
+    
     parseLogFile(fallbackLogPath, fallbackRequestsMap);
     parseLogFile(cacheLogPath, cacheRequestsMap);
     parseLogFile(poolLogPath, poolRequestsMap);
