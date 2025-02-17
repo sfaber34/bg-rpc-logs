@@ -8,11 +8,12 @@ const { logPort } = require('./config');
 const fallbackRequestsMap = new Map();
 const cacheRequestsMap = new Map();
 const poolRequestsMap = new Map();
+const poolNodeMap = new Map();
 
-// Read and parse the fallback requests log file
 const fallbackLogPath = path.join(__dirname, '../shared/fallbackRequests.log');
 const cacheLogPath = path.join(__dirname, '../shared/cacheRequests.log');
 const poolLogPath = path.join(__dirname, '../shared/poolRequests.log');
+const poolNodeLogPath = path.join(__dirname, '../shared/poolNode.log');
 
 // Cache object for dashboard metrics
 let cachedDashboardMetrics = null;
@@ -64,6 +65,39 @@ function parseLogFile(logPath, targetMap) {
     } catch (error) {
         const mapName = targetMap === fallbackRequestsMap ? 'fallbackRequestsMap' : targetMap === cacheRequestsMap ? 'cacheRequestsMap' : 'poolRequestsMap';
         console.error(`Error parsing ${mapName} log file:`, error);
+    }
+}
+
+function parsePoolNodeLog(logPath, targetMap) {
+    try {
+        const fileContent = fs.readFileSync(logPath, 'utf8');
+        const lines = fileContent.trim().split('\n');
+        let newEntriesCount = 0;
+        
+        lines.forEach(line => {
+            const [timestamp, epoch, nodeId, owner, method, params, duration, status] = line.split('|');
+            
+            // Only add entries that aren't already in the map
+            if (!targetMap.has(epoch)) {
+                targetMap.set(epoch, {
+                    timestamp,
+                    epoch,
+                    nodeId,
+                    owner,
+                    method,
+                    params,
+                    duration: parseFloat(duration),
+                    status
+                });
+                newEntriesCount++;
+            }
+        });
+        
+        if (newEntriesCount > 0) {
+            console.log(`Added ${newEntriesCount} new entries to poolNodeMap. Total entries: ${targetMap.size}`);
+        }
+    } catch (error) {
+        console.error('Error parsing poolNodeMap log file:', error);
     }
 }
 
@@ -193,6 +227,8 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify(getMapContents(cacheRequestsMap), null, 2));
     } else if (req.url === '/poolRequests') {
         res.end(JSON.stringify(getMapContents(poolRequestsMap), null, 2));
+    } else if (req.url === '/poolNode') {
+        res.end(JSON.stringify(getMapContents(poolNodeMap), null, 2));
     } else if (req.url === '/dashboard') {
         res.end(JSON.stringify(cachedDashboardMetrics, null, 2));
     } else {
@@ -215,11 +251,13 @@ function updateCachedMetrics() {
 parseLogFile(fallbackLogPath, fallbackRequestsMap);
 parseLogFile(cacheLogPath, cacheRequestsMap);
 parseLogFile(poolLogPath, poolRequestsMap);
+parsePoolNodeLog(poolNodeLogPath, poolNodeMap);
 updateCachedMetrics();
 
 setInterval(() => {
     parseLogFile(fallbackLogPath, fallbackRequestsMap);
     parseLogFile(cacheLogPath, cacheRequestsMap);
     parseLogFile(poolLogPath, poolRequestsMap);
+    parsePoolNodeLog(poolNodeLogPath, poolNodeMap);
     updateCachedMetrics();
 }, parseInterval);
