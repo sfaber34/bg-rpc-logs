@@ -10,6 +10,9 @@ const cacheRequestsMap = new Map();
 const poolRequestsMap = new Map();
 const poolNodesMap = new Map();
 
+// Store request history data
+const requestHistory = new Map();
+
 const fallbackLogPath = path.join(__dirname, '../shared/fallbackRequests.log');
 const cacheLogPath = path.join(__dirname, '../shared/cacheRequests.log');
 const poolLogPath = path.join(__dirname, '../shared/poolRequests.log');
@@ -106,6 +109,49 @@ function getMapContents(targetMap) {
       epoch,
       ...entry
   }));
+}
+
+function getStartOfHour(timestamp) {
+    const date = new Date(parseInt(timestamp));
+    date.setMinutes(0, 0, 0);
+    return date.getTime();
+}
+
+function updateRequestHistory() {
+    // Clear existing history before recalculating
+    requestHistory.clear();
+    
+    // Process all maps
+    [
+        { map: fallbackRequestsMap, prefix: 'fallback' },
+        { map: cacheRequestsMap, prefix: 'cache' },
+        { map: poolRequestsMap, prefix: 'pool' }
+    ].forEach(({ map, prefix }) => {
+        map.forEach(entry => {
+            const entryHour = getStartOfHour(entry.epoch);
+            
+            if (!requestHistory.has(entryHour)) {
+                requestHistory.set(entryHour, {
+                    hourMs: entryHour,
+                    nCacheRequestsSuccess: 0,
+                    nCacheRequestsError: 0,
+                    nPoolRequestsSuccess: 0,
+                    nPoolRequestsError: 0,
+                    nFallbackRequestsSuccess: 0,
+                    nFallbackRequestsError: 0
+                });
+            }
+            
+            const hourData = requestHistory.get(entryHour);
+            const isSuccess = entry.status === 'success';
+            
+            if (isSuccess) {
+                hourData[`n${prefix.charAt(0).toUpperCase() + prefix.slice(1)}RequestsSuccess`]++;
+            } else {
+                hourData[`n${prefix.charAt(0).toUpperCase() + prefix.slice(1)}RequestsError`]++;
+            }
+        });
+    });
 }
 
 function getDashboardMetrics() {
@@ -213,7 +259,8 @@ function getDashboardMetrics() {
         aveCacheRequestTimeLastHour,
         avePoolRequestTimeLastHour,
         methodDurationHist,
-        originDurationHist
+        originDurationHist,
+        requestHistory: Array.from(requestHistory.values())
     };
 }
 
@@ -248,12 +295,28 @@ function updateCachedMetrics() {
     cachedDashboardMetrics = getDashboardMetrics();
 }
 
+// Initial processing
 parseLogFile(fallbackLogPath, fallbackRequestsMap);
 parseLogFile(cacheLogPath, cacheRequestsMap);
 parseLogFile(poolLogPath, poolRequestsMap);
 parsePoolNodeLog(poolNodesLogPath, poolNodesMap);
+updateRequestHistory(); // Initial history calculation
 updateCachedMetrics();
 
+// Calculate time until next hour
+const now = new Date();
+const nextHour = new Date(now);
+nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
+const timeUntilNextHour = nextHour - now;
+
+// Schedule request history updates to run at the start of each hour
+setTimeout(() => {
+    updateRequestHistory();
+    // Then schedule recurring updates every hour
+    setInterval(updateRequestHistory, 60 * 60 * 1000);
+}, timeUntilNextHour);
+
+// Keep regular dashboard metrics updates at current interval
 setInterval(() => {
     parseLogFile(fallbackLogPath, fallbackRequestsMap);
     parseLogFile(cacheLogPath, cacheRequestsMap);
