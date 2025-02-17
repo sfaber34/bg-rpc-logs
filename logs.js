@@ -118,8 +118,11 @@ function getStartOfHour(timestamp) {
 }
 
 function updateRequestHistory() {
-    // Clear existing history before recalculating
-    requestHistory.clear();
+    // Find the latest hour we've processed
+    let latestProcessedHour = 0;
+    if (requestHistory.size > 0) {
+        latestProcessedHour = Math.max(...requestHistory.keys());
+    }
     
     // Process all maps
     [
@@ -129,6 +132,11 @@ function updateRequestHistory() {
     ].forEach(({ map, prefix }) => {
         map.forEach(entry => {
             const entryHour = getStartOfHour(entry.epoch);
+            
+            // Skip if this hour has already been processed
+            if (entryHour <= latestProcessedHour) {
+                return;
+            }
             
             if (!requestHistory.has(entryHour)) {
                 requestHistory.set(entryHour, {
