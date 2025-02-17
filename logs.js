@@ -260,7 +260,7 @@ function getDashboardMetrics() {
         avePoolRequestTimeLastHour,
         methodDurationHist,
         originDurationHist,
-        requestHistory: Array.from(requestHistory.values())
+        requestHistory: Array.from(requestHistory.values()).sort((a, b) => a.hourMs - b.hourMs)
     };
 }
 
