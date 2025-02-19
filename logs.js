@@ -80,9 +80,12 @@ function parsePoolNodeLog(logPath, targetMap) {
         lines.forEach(line => {
             const [timestamp, epoch, nodeId, owner, method, params, duration, status] = line.split('|');
             
+            // Create a composite key using epoch and nodeId
+            const compositeKey = `${epoch}-${nodeId}`;
+            
             // Only add entries that aren't already in the map
-            if (!targetMap.has(epoch)) {
-                targetMap.set(epoch, {
+            if (!targetMap.has(compositeKey)) {
+                targetMap.set(compositeKey, {
                     timestamp,
                     epoch,
                     nodeId,
@@ -105,10 +108,15 @@ function parsePoolNodeLog(logPath, targetMap) {
 }
 
 function getMapContents(targetMap) {
-  return Array.from(targetMap.entries()).map(([epoch, entry]) => ({
-      epoch,
-      ...entry
-  }));
+  return Array.from(targetMap.entries()).map(([key, entry]) => {
+      // For poolNodesMap entries, the key is a composite of epoch-nodeId
+      // For other maps, the key is just the epoch
+      const isPoolNodesMap = 'nodeId' in entry;
+      return {
+          epoch: entry.epoch,
+          ...entry
+      };
+  });
 }
 
 function getStartOfHour(timestamp) {
