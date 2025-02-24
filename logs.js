@@ -109,6 +109,52 @@ function parsePoolNodeLog(logPath, targetMap) {
     }
 }
 
+function parsePoolCompareResultsLog(logPath, targetMap) {
+    try {
+        const fileContent = fs.readFileSync(logPath, 'utf8');
+        const lines = fileContent.trim().split('\n');
+        let newEntriesCount = 0;
+        
+        lines.forEach(line => {
+            const [
+                timestamp, epoch, resultsMatch, mismatchedNode, mismatchedOwner, 
+                mismatchedResults, nodeId1, nodeResult1, nodeId2, nodeResult2, 
+                nodeId3, nodeResult3
+            ] = line.split('|');
+            
+            // Only add entries that aren't already in the map
+            if (!targetMap.has(epoch)) {
+                // Parse mismatchedResults from string to array, handling empty case
+                const parsedMismatchedResults = mismatchedResults === '[]' ? 
+                    [] : 
+                    JSON.parse(mismatchedResults);
+                
+                targetMap.set(epoch, {
+                    timestamp,
+                    epoch,
+                    resultsMatch: resultsMatch === 'true',
+                    mismatchedNode: mismatchedNode === 'nan' ? null : mismatchedNode,
+                    mismatchedOwner: mismatchedOwner === 'nan' ? null : mismatchedOwner,
+                    mismatchedResults: parsedMismatchedResults,
+                    nodeId1,
+                    nodeResult1: JSON.parse(nodeResult1),
+                    nodeId2,
+                    nodeResult2: JSON.parse(nodeResult2),
+                    nodeId3,
+                    nodeResult3: JSON.parse(nodeResult3)
+                });
+                newEntriesCount++;
+            }
+        });
+        
+        if (newEntriesCount > 0) {
+            console.log(`Added ${newEntriesCount} new entries to poolCompareResultsMap. Total entries: ${targetMap.size}`);
+        }
+    } catch (error) {
+        console.error('Error parsing poolCompareResultsMap log file:', error);
+    }
+}
+
 function getMapContents(targetMap) {
   return Array.from(targetMap.entries()).map(([key, entry]) => {
       // For poolNodesMap entries, the key is a composite of epoch-nodeId
@@ -292,6 +338,8 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify(getMapContents(cacheRequestsMap), null, 2));
     } else if (req.url === '/poolRequests') {
         res.end(JSON.stringify(getMapContents(poolRequestsMap), null, 2));
+    } else if (req.url === '/poolCompareResults') {
+        res.end(JSON.stringify(getMapContents(poolCompareResultsMap), null, 2));
     } else if (req.url === '/poolNodes') {
         res.end(JSON.stringify(getMapContents(poolNodesMap), null, 2));
     } else if (req.url === '/dashboard') {
@@ -318,6 +366,7 @@ parseLogFile(fallbackLogPath, fallbackRequestsMap);
 parseLogFile(cacheLogPath, cacheRequestsMap);
 parseLogFile(poolLogPath, poolRequestsMap);
 parsePoolNodeLog(poolNodesLogPath, poolNodesMap);
+parsePoolCompareResultsLog(poolCompareResultsLogPath, poolCompareResultsMap);
 updateRequestHistory(); // Initial history calculation
 updateCachedMetrics();
 
@@ -339,5 +388,6 @@ setInterval(() => {
     parseLogFile(cacheLogPath, cacheRequestsMap);
     parseLogFile(poolLogPath, poolRequestsMap);
     parsePoolNodeLog(poolNodesLogPath, poolNodesMap);
+    parsePoolCompareResultsLog(poolCompareResultsLogPath, poolCompareResultsMap);
     updateCachedMetrics();
 }, parseInterval);
