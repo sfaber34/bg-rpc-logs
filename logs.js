@@ -9,6 +9,7 @@ const fallbackRequestsMap = new Map();
 const cacheRequestsMap = new Map();
 const poolRequestsMap = new Map();
 const poolNodesMap = new Map();
+const poolCompareResultsMap = new Map();
 
 // Store request history data
 const requestHistory = new Map();
@@ -17,6 +18,7 @@ const fallbackLogPath = path.join(__dirname, '../shared/fallbackRequests.log');
 const cacheLogPath = path.join(__dirname, '../shared/cacheRequests.log');
 const poolLogPath = path.join(__dirname, '../shared/poolRequests.log');
 const poolNodesLogPath = path.join(__dirname, '../shared/poolNodes.log');
+const poolCompareResultsLogPath = path.join(__dirname, '../shared/poolCompareResults.log');
 
 // Cache object for dashboard metrics
 let cachedDashboardMetrics = null;
