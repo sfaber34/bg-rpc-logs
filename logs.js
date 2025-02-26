@@ -212,7 +212,19 @@ function updateRequestHistory() {
             if (isSuccess) {
                 hourData[`n${prefix.charAt(0).toUpperCase() + prefix.slice(1)}RequestsSuccess`]++;
             } else {
-                hourData[`n${prefix.charAt(0).toUpperCase() + prefix.slice(1)}RequestsError`]++;
+                // Apply the same error filtering logic as getDashboardMetrics
+                try {
+                    const statusObj = JSON.parse(entry.status);
+                    if (!(statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69'))) {
+                        hourData[`n${prefix.charAt(0).toUpperCase() + prefix.slice(1)}RequestsError`]++;
+                    } else {
+                        // If it's a -69 error, count it as success since we don't want to count it as an error
+                        hourData[`n${prefix.charAt(0).toUpperCase() + prefix.slice(1)}RequestsSuccess`]++;
+                    }
+                } catch (e) {
+                    // If status is not JSON or doesn't have expected structure, count as error
+                    hourData[`n${prefix.charAt(0).toUpperCase() + prefix.slice(1)}RequestsError`]++;
+                }
             }
         });
     });
@@ -259,8 +271,17 @@ function getDashboardMetrics() {
         if (parseInt(entry.epoch) >= oneHourAgo) {
             nFallbackRequestsLastHour++;
             totalFallbackTime += entry.elapsed;
+            // Check if status is not success and error code doesn't start with -69
             if (entry.status !== 'success') {
-                nErrorFallbackRequestsLastHour++;
+                try {
+                    const statusObj = JSON.parse(entry.status);
+                    if (!(statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69'))) {
+                        nErrorFallbackRequestsLastHour++;
+                    }
+                } catch (e) {
+                    // If status is not JSON or doesn't have expected structure, count as error
+                    nErrorFallbackRequestsLastHour++;
+                }
             }
         }
     });
@@ -275,7 +296,15 @@ function getDashboardMetrics() {
             nCacheRequestsLastHour++;
             totalCacheTime += entry.elapsed;
             if (entry.status !== 'success') {
-                nErrorCacheRequestsLastHour++;
+                try {
+                    const statusObj = JSON.parse(entry.status);
+                    if (!(statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69'))) {
+                        nErrorCacheRequestsLastHour++;
+                    }
+                } catch (e) {
+                    // If status is not JSON or doesn't have expected structure, count as error
+                    nErrorCacheRequestsLastHour++;
+                }
             }
         }
     });
@@ -290,7 +319,15 @@ function getDashboardMetrics() {
             nPoolRequestsLastHour++;
             totalPoolTime += entry.elapsed;
             if (entry.status !== 'success') {
-                nErrorPoolRequestsLastHour++;
+                try {
+                    const statusObj = JSON.parse(entry.status);
+                    if (!(statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69'))) {
+                        nErrorPoolRequestsLastHour++;
+                    }
+                } catch (e) {
+                    // If status is not JSON or doesn't have expected structure, count as error
+                    nErrorPoolRequestsLastHour++;
+                }
             }
         }
     });
