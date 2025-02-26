@@ -199,27 +199,27 @@ function updateRequestHistory() {
                     hourMs: entryHour,
                     nCacheRequestsSuccess: 0,
                     nCacheRequestsError: 0,
+                    nCacheRequestsWarning: 0,
                     nPoolRequestsSuccess: 0,
                     nPoolRequestsError: 0,
+                    nPoolRequestsWarning: 0,
                     nFallbackRequestsSuccess: 0,
-                    nFallbackRequestsError: 0
+                    nFallbackRequestsError: 0,
+                    nFallbackRequestsWarning: 0
                 });
             }
             
             const hourData = requestHistory.get(entryHour);
-            const isSuccess = entry.status === 'success';
             
-            if (isSuccess) {
+            if (entry.status === 'success') {
                 hourData[`n${prefix.charAt(0).toUpperCase() + prefix.slice(1)}RequestsSuccess`]++;
             } else {
-                // Apply the same error filtering logic as getDashboardMetrics
                 try {
                     const statusObj = JSON.parse(entry.status);
-                    if (!(statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69'))) {
-                        hourData[`n${prefix.charAt(0).toUpperCase() + prefix.slice(1)}RequestsError`]++;
+                    if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
+                        hourData[`n${prefix.charAt(0).toUpperCase() + prefix.slice(1)}RequestsWarning`]++;
                     } else {
-                        // If it's a -69 error, count it as success since we don't want to count it as an error
-                        hourData[`n${prefix.charAt(0).toUpperCase() + prefix.slice(1)}RequestsSuccess`]++;
+                        hourData[`n${prefix.charAt(0).toUpperCase() + prefix.slice(1)}RequestsError`]++;
                     }
                 } catch (e) {
                     // If status is not JSON or doesn't have expected structure, count as error
@@ -235,10 +235,13 @@ function getDashboardMetrics() {
     
     let nFallbackRequestsLastHour = 0;
     let nErrorFallbackRequestsLastHour = 0;
+    let nWarningFallbackRequestsLastHour = 0;
     let nCacheRequestsLastHour = 0;
     let nErrorCacheRequestsLastHour = 0;
+    let nWarningCacheRequestsLastHour = 0;
     let nPoolRequestsLastHour = 0;
     let nErrorPoolRequestsLastHour = 0;
+    let nWarningPoolRequestsLastHour = 0;
     let totalFallbackTime = 0;
     let totalCacheTime = 0;
     let totalPoolTime = 0;
@@ -275,7 +278,9 @@ function getDashboardMetrics() {
             if (entry.status !== 'success') {
                 try {
                     const statusObj = JSON.parse(entry.status);
-                    if (!(statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69'))) {
+                    if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
+                        nWarningFallbackRequestsLastHour++;
+                    } else {
                         nErrorFallbackRequestsLastHour++;
                     }
                 } catch (e) {
@@ -298,7 +303,9 @@ function getDashboardMetrics() {
             if (entry.status !== 'success') {
                 try {
                     const statusObj = JSON.parse(entry.status);
-                    if (!(statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69'))) {
+                    if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
+                        nWarningCacheRequestsLastHour++;
+                    } else {
                         nErrorCacheRequestsLastHour++;
                     }
                 } catch (e) {
@@ -321,7 +328,9 @@ function getDashboardMetrics() {
             if (entry.status !== 'success') {
                 try {
                     const statusObj = JSON.parse(entry.status);
-                    if (!(statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69'))) {
+                    if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
+                        nWarningPoolRequestsLastHour++;
+                    } else {
                         nErrorPoolRequestsLastHour++;
                     }
                 } catch (e) {
@@ -356,6 +365,9 @@ function getDashboardMetrics() {
         nErrorFallbackRequestsLastHour,
         nErrorCacheRequestsLastHour,
         nErrorPoolRequestsLastHour,
+        nWarningFallbackRequestsLastHour,
+        nWarningCacheRequestsLastHour,
+        nWarningPoolRequestsLastHour,
         aveFallbackRequestTimeLastHour,
         aveCacheRequestTimeLastHour,
         avePoolRequestTimeLastHour,
