@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const http = require('http');
+const https = require('https');
 
 const { parseInterval } = require('./config');
 const { logPort } = require('./config');
@@ -377,8 +377,13 @@ function getDashboardMetrics() {
     };
 }
 
-// Create HTTP server to serve map contents
-const server = http.createServer((req, res) => {
+// Create HTTPS server to serve map contents
+const server = https.createServer(
+  {
+    key: fs.readFileSync("/home/ubuntu/shared/server.key"),
+    cert: fs.readFileSync("/home/ubuntu/shared/server.cert"),
+  },
+  (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     
     if (req.url === '/fallbackRequests') {
@@ -402,7 +407,7 @@ const server = http.createServer((req, res) => {
 server.listen(logPort, () => {
     console.log("----------------------------------------------------------------------------------------------------------------");
     console.log("----------------------------------------------------------------------------------------------------------------");
-    console.log(`Logs server running at http://localhost:${logPort}`);
+    console.log(`HTTPS logs server running at https://localhost:${logPort}`);
 });
 
 // Function to update cached metrics
