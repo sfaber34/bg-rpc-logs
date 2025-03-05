@@ -246,9 +246,10 @@ function getDashboardMetrics() {
     let totalCacheTime = 0;
     let totalPoolTime = 0;
     
-    // Object to store method-based and origin-based times for ALL requests
+    // Object to store method-based, origin-based, and node-based times for ALL requests
     const methodTimes = {};
     const originTimes = {};
+    const nodeTimes = {};
     
     // Helper function to process entries for method times - now processes ALL entries
     const processEntryForMethodTimes = (entry) => {
@@ -340,6 +341,15 @@ function getDashboardMetrics() {
             }
         }
     });
+
+    // Process node durations from poolNodesMap
+    poolNodesMap.forEach(entry => {
+        const nodeId = entry.nodeId;
+        if (!nodeTimes[nodeId]) {
+            nodeTimes[nodeId] = [];
+        }
+        nodeTimes[nodeId].push(entry.duration);
+    });
     
     // Calculate percentiles for each method and origin using ALL data
     const methodDurationHist = {};
@@ -350,6 +360,12 @@ function getDashboardMetrics() {
     const originDurationHist = {};
     Object.entries(originTimes).forEach(([origin, times]) => {
         originDurationHist[origin] = calculatePercentiles(times, [1, 25, 50, 75, 99]);
+    });
+
+    // Calculate percentiles for each node using ALL data
+    const nodeDurationHist = {};
+    Object.entries(nodeTimes).forEach(([nodeId, times]) => {
+        nodeDurationHist[nodeId] = calculatePercentiles(times, [1, 25, 50, 75, 99]);
     });
     
     const aveFallbackRequestTimeLastHour = nFallbackRequestsLastHour > 0 ? totalFallbackTime / nFallbackRequestsLastHour : 0;
@@ -373,6 +389,7 @@ function getDashboardMetrics() {
         avePoolRequestTimeLastHour,
         methodDurationHist,
         originDurationHist,
+        nodeDurationHist,
         requestHistory: Array.from(requestHistory.values()).sort((a, b) => a.hourMs - b.hourMs)
     };
 }
