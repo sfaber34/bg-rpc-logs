@@ -119,7 +119,7 @@ function parsePoolCompareResultsLog(logPath, targetMap) {
             const [
                 timestamp, epoch, resultsMatch, mismatchedNode, mismatchedOwner, 
                 mismatchedResults, nodeId1, nodeResult1, nodeId2, nodeResult2, 
-                nodeId3, nodeResult3
+                nodeId3, nodeResult3, method, params
             ] = line.split('|');
             
             // Only add entries that aren't already in the map
@@ -141,7 +141,9 @@ function parsePoolCompareResultsLog(logPath, targetMap) {
                     nodeId2,
                     nodeResult2: JSON.parse(nodeResult2),
                     nodeId3,
-                    nodeResult3: JSON.parse(nodeResult3)
+                    nodeResult3: JSON.parse(nodeResult3),
+                    method,
+                    params
                 });
                 newEntriesCount++;
             }
