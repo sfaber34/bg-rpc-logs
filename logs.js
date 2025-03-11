@@ -14,6 +14,10 @@ const poolCompareResultsMap = new Map();
 // Store request history data
 const requestHistory = new Map();
 
+// Cache object for requestor metrics
+let cachedRequestorMetrics = null;
+let lastProcessedRequestorEpoch = 0;
+
 const fallbackLogPath = path.join(__dirname, '../shared/fallbackRequests.log');
 const cacheLogPath = path.join(__dirname, '../shared/cacheRequests.log');
 const poolLogPath = path.join(__dirname, '../shared/poolRequests.log');
@@ -396,6 +400,70 @@ function getDashboardMetrics() {
     };
 }
 
+function updateRequestorMetrics() {
+    const oneWeekAgo = Date.now() - (7 * 24 * 60 * 60 * 1000); // 1 week in milliseconds
+    
+    // Initialize metrics map with existing data if available
+    const requestorMetrics = new Map(
+        cachedRequestorMetrics ? 
+        Object.entries(cachedRequestorMetrics).map(([key, value]) => [key, {...value}]) : 
+        []
+    );
+
+    // Helper function to process a single map entry
+    const processEntry = (entry, type) => {
+        // Skip if we've already processed this epoch
+        if (parseInt(entry.epoch) <= lastProcessedRequestorEpoch) {
+            return;
+        }
+
+        const requester = entry.requester || 'unknown';
+        if (!requestorMetrics.has(requester)) {
+            requestorMetrics.set(requester, {
+                nAllRequestsAllTime: 0,
+                nCacheRequestsAllTime: 0,
+                nPoolRequestsAllTime: 0,
+                nFallbackRequestsAllTime: 0,
+                nAllRequestsLastWeek: 0,
+                nCacheRequestsLastWeek: 0,
+                nPoolRequestsLastWeek: 0,
+                nFallbackRequestsLastWeek: 0
+            });
+        }
+
+        const metrics = requestorMetrics.get(requester);
+        const isLastWeek = parseInt(entry.epoch) >= oneWeekAgo;
+
+        // Update all-time metrics
+        metrics.nAllRequestsAllTime++;
+        metrics[`n${type}RequestsAllTime`]++;
+
+        // Update last week metrics if applicable
+        if (isLastWeek) {
+            metrics.nAllRequestsLastWeek++;
+            metrics[`n${type}RequestsLastWeek`]++;
+        }
+    };
+
+    // Process each map
+    fallbackRequestsMap.forEach(entry => processEntry(entry, 'Fallback'));
+    cacheRequestsMap.forEach(entry => processEntry(entry, 'Cache'));
+    poolRequestsMap.forEach(entry => processEntry(entry, 'Pool'));
+
+    // Update the last processed epoch to the latest one we've seen
+    const allEpochs = [
+        ...Array.from(fallbackRequestsMap.values()).map(e => parseInt(e.epoch)),
+        ...Array.from(cacheRequestsMap.values()).map(e => parseInt(e.epoch)),
+        ...Array.from(poolRequestsMap.values()).map(e => parseInt(e.epoch))
+    ];
+    if (allEpochs.length > 0) {
+        lastProcessedRequestorEpoch = Math.max(...allEpochs);
+    }
+
+    // Convert Map to object for JSON serialization
+    cachedRequestorMetrics = Object.fromEntries(requestorMetrics);
+}
+
 // Create HTTPS server to serve map contents
 const server = https.createServer(
   {
@@ -417,6 +485,8 @@ const server = https.createServer(
         res.end(JSON.stringify(getMapContents(poolNodesMap), null, 2));
     } else if (req.url === '/dashboard') {
         res.end(JSON.stringify(cachedDashboardMetrics, null, 2));
+    } else if (req.url === '/requestorTable') {
+        res.end(JSON.stringify(cachedRequestorMetrics, null, 2));
     } else {
         res.statusCode = 404;
         res.end(JSON.stringify({ error: 'Not found' }));
@@ -432,6 +502,7 @@ server.listen(logPort, () => {
 // Function to update cached metrics
 function updateCachedMetrics() {
     cachedDashboardMetrics = getDashboardMetrics();
+    updateRequestorMetrics();
 }
 
 // Initial processing
@@ -440,6 +511,10 @@ parseLogFile(cacheLogPath, cacheRequestsMap);
 parseLogFile(poolLogPath, poolRequestsMap);
 parsePoolNodeLog(poolNodesLogPath, poolNodesMap);
 parsePoolCompareResultsLog(poolCompareResultsLogPath, poolCompareResultsMap);
+
+// Reset lastProcessedRequestorEpoch to ensure we process all entries on first run
+lastProcessedRequestorEpoch = 0;
+
 updateRequestHistory(); // Initial history calculation
 updateCachedMetrics();
 
