@@ -374,9 +374,39 @@ function getDashboardMetrics() {
         nodeDurationHist[nodeId] = calculatePercentiles(times, [1, 25, 50, 75, 99]);
     });
     
-    const aveFallbackRequestTimeLastHour = nFallbackRequestsLastHour > 0 ? totalFallbackTime / nFallbackRequestsLastHour : 0;
-    const aveCacheRequestTimeLastHour = nCacheRequestsLastHour > 0 ? totalCacheTime / nCacheRequestsLastHour : 0;
-    const avePoolRequestTimeLastHour = nPoolRequestsLastHour > 0 ? totalPoolTime / nPoolRequestsLastHour : 0;
+    // Collect request times for each type of request from the last hour
+    const fallbackRequestTimesLastHour = [];
+    const cacheRequestTimesLastHour = [];
+    const poolRequestTimesLastHour = [];
+    
+    // Collect fallback request times from the last hour
+    fallbackRequestsMap.forEach(entry => {
+        if (parseInt(entry.epoch) >= oneHourAgo) {
+            fallbackRequestTimesLastHour.push(entry.elapsed);
+        }
+    });
+    
+    // Collect cache request times from the last hour
+    cacheRequestsMap.forEach(entry => {
+        if (parseInt(entry.epoch) >= oneHourAgo) {
+            cacheRequestTimesLastHour.push(entry.elapsed);
+        }
+    });
+    
+    // Collect pool request times from the last hour
+    poolRequestsMap.forEach(entry => {
+        if (parseInt(entry.epoch) >= oneHourAgo) {
+            poolRequestTimesLastHour.push(entry.elapsed);
+        }
+    });
+    
+    // Calculate true medians using the calculatePercentiles function
+    const medFallbackRequestTimeLastHour = fallbackRequestTimesLastHour.length > 0 ? 
+        calculatePercentiles(fallbackRequestTimesLastHour, [50]).p50 : 0;
+    const medCacheRequestTimeLastHour = cacheRequestTimesLastHour.length > 0 ? 
+        calculatePercentiles(cacheRequestTimesLastHour, [50]).p50 : 0;
+    const medPoolRequestTimeLastHour = poolRequestTimesLastHour.length > 0 ? 
+        calculatePercentiles(poolRequestTimesLastHour, [50]).p50 : 0;
     
     return {
         timestamp: Date.now(),
@@ -390,9 +420,9 @@ function getDashboardMetrics() {
         nWarningFallbackRequestsLastHour,
         nWarningCacheRequestsLastHour,
         nWarningPoolRequestsLastHour,
-        aveFallbackRequestTimeLastHour,
-        aveCacheRequestTimeLastHour,
-        avePoolRequestTimeLastHour,
+        medFallbackRequestTimeLastHour,
+        medCacheRequestTimeLastHour,
+        medPoolRequestTimeLastHour,
         methodDurationHist,
         originDurationHist,
         nodeDurationHist,
