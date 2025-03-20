@@ -27,6 +27,9 @@ const poolCompareResultsLogPath = path.join(__dirname, '../shared/poolCompareRes
 // Cache object for dashboard metrics
 let cachedDashboardMetrics = null;
 
+// Cache object for node timing metrics
+let cachedNodeTimingMetrics = null;
+
 // Helper function to calculate percentiles
 function calculatePercentiles(values, percentiles) {
     if (values.length === 0) return {};
@@ -354,7 +357,7 @@ function getDashboardMetrics() {
         if (!nodeTimes[nodeId]) {
             nodeTimes[nodeId] = [];
         }
-        nodeTimes[nodeId].push(entry.duration);
+        nodeTimes[nodeId].push(parseFloat(entry.duration));
     });
     
     // Calculate percentiles for each method and origin using ALL data
@@ -494,6 +497,34 @@ function updateRequestorMetrics() {
     cachedRequestorMetrics = Object.fromEntries(requestorMetrics);
 }
 
+function calculateNodeTimingMetrics() {
+    const oneWeekAgo = Date.now() - (7 * 24 * 60 * 60 * 1000); // 1 week in milliseconds
+    const nodeTimings = new Map();
+
+    // Process each entry in poolNodesMap
+    poolNodesMap.forEach(entry => {
+        const epoch = parseInt(entry.epoch);
+        if (epoch >= oneWeekAgo) {
+            const nodeId = entry.nodeId;
+            if (!nodeTimings.has(nodeId)) {
+                nodeTimings.set(nodeId, []);
+            }
+            nodeTimings.get(nodeId).push(parseFloat(entry.duration));
+        }
+    });
+
+    // Calculate 75th percentile for each node
+    const result = {};
+    nodeTimings.forEach((durations, nodeId) => {
+        if (durations.length > 0) {
+            const percentiles = calculatePercentiles(durations, [75]);
+            result[nodeId] = percentiles.p75;
+        }
+    });
+
+    cachedNodeTimingMetrics = result;
+}
+
 // Create HTTPS server to serve map contents
 const server = https.createServer(
   {
@@ -517,6 +548,8 @@ const server = https.createServer(
         res.end(JSON.stringify(cachedDashboardMetrics, null, 2));
     } else if (req.url === '/requestorTable') {
         res.end(JSON.stringify(cachedRequestorMetrics, null, 2));
+    } else if (req.url === '/nodeTimingLastWeek') {
+        res.end(JSON.stringify(cachedNodeTimingMetrics, null, 2));
     } else {
         res.statusCode = 404;
         res.end(JSON.stringify({ error: 'Not found' }));
@@ -542,6 +575,9 @@ parseLogFile(poolLogPath, poolRequestsMap);
 parsePoolNodeLog(poolNodesLogPath, poolNodesMap);
 parsePoolCompareResultsLog(poolCompareResultsLogPath, poolCompareResultsMap);
 
+// Calculate initial node timing metrics after poolNodesMap is populated
+calculateNodeTimingMetrics();
+
 // Reset lastProcessedRequestorEpoch to ensure we process all entries on first run
 lastProcessedRequestorEpoch = 0;
 
@@ -559,6 +595,7 @@ setInterval(() => {
     if (currentHour !== lastProcessedHour) {
         console.log(`Hour changed from ${lastProcessedHour} to ${currentHour}, updating request history...`);
         updateRequestHistory();
+        calculateNodeTimingMetrics(); // Update node timing metrics every hour
         lastProcessedHour = currentHour;
     }
     
