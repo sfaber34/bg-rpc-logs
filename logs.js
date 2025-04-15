@@ -290,16 +290,20 @@ function parsePoolCompareResultsLog(logPath, targetMap) {
         matchedEntries.sort(sortByTimestamp);
         mismatchedEntries.sort(sortByTimestamp);
         
-        // Clear the map and add entries
+        // Clear the map
         targetMap.clear();
         
-        // Add all mismatched entries
-        mismatchedEntries.forEach(({key, value}) => {
-            targetMap.set(key, value);
-        });
+        // Combine and sort all entries we want to keep
+        const allEntries = [
+            ...mismatchedEntries, // Keep all mismatched entries
+            ...matchedEntries.slice(0, maxLogEntries) // Keep only up to maxLogEntries matched entries
+        ];
         
-        // Add the most recent matched entries up to maxLogEntries
-        matchedEntries.slice(0, maxLogEntries).forEach(({key, value}) => {
+        // Sort all entries together by timestamp
+        allEntries.sort(sortByTimestamp);
+        
+        // Add all entries to the map in sorted order
+        allEntries.forEach(({key, value}) => {
             targetMap.set(key, value);
         });
         
