@@ -395,166 +395,138 @@ function getDashboardMetrics() {
     let nPoolRequestsLastHour = 0;
     let nErrorPoolRequestsLastHour = 0;
     let nWarningPoolRequestsLastHour = 0;
-    let totalFallbackTime = 0;
-    let totalCacheTime = 0;
-    let totalPoolTime = 0;
     
-    // Object to store method-based, origin-based, and node-based times for ALL requests
+    // For histograms
     const methodTimes = {};
     const originTimes = {};
     const nodeTimes = {};
     
-    // Helper function to process entries for method times - now processes ALL entries
-    const processEntryForMethodTimes = (entry) => {
-        if (!methodTimes[entry.method]) {
-            methodTimes[entry.method] = [];
-        }
-        methodTimes[entry.method].push(entry.elapsed);
+    // For last hour medians
+    const fallbackRequestTimesLastHour = [];
+    const cacheRequestTimesLastHour = [];
+    const poolRequestTimesLastHour = [];
 
-        // Process origin times
-        const origin = entry.requester || 'N/A';
-        if (!originTimes[origin]) {
-            originTimes[origin] = [];
-        }
-        originTimes[origin].push(entry.elapsed);
-    };
-    
-    // Process fallback requests
-    fallbackRequestsMap.forEach(entry => {
-        // Process ALL entries for histograms
-        processEntryForMethodTimes(entry);
-        
-        // Only count last hour stats for hourly metrics
-        if (parseInt(entry.epoch) >= oneHourAgo) {
-            nFallbackRequestsLastHour++;
-            totalFallbackTime += entry.elapsed;
-            // Check if status is not success and error code doesn't start with -69
-            if (entry.status !== 'success') {
-                try {
-                    const statusObj = JSON.parse(entry.status);
-                    if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
-                        nWarningFallbackRequestsLastHour++;
-                    } else {
+    // Helper for method/origin histograms
+    function processEntryForMethodTimes(method, elapsed, requester) {
+        if (!methodTimes[method]) methodTimes[method] = [];
+        methodTimes[method].push(elapsed);
+        const origin = requester || 'N/A';
+        if (!originTimes[origin]) originTimes[origin] = [];
+        originTimes[origin].push(elapsed);
+    }
+
+    // --- Fallback log ---
+    try {
+        const lines = fs.readFileSync(fallbackLogPath, 'utf8').trim().split('\n');
+        for (const line of lines) {
+            const [timestamp, epoch, requester, method, , elapsed, status] = line.split('|');
+            const epochNum = parseInt(epoch);
+            const elapsedNum = parseFloat(elapsed);
+            processEntryForMethodTimes(method, elapsedNum, requester);
+            if (epochNum >= oneHourAgo) {
+                nFallbackRequestsLastHour++;
+                fallbackRequestTimesLastHour.push(elapsedNum);
+                if (status !== 'success') {
+                    try {
+                        const statusObj = JSON.parse(status);
+                        if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
+                            nWarningFallbackRequestsLastHour++;
+                        } else {
+                            nErrorFallbackRequestsLastHour++;
+                        }
+                    } catch {
                         nErrorFallbackRequestsLastHour++;
                     }
-                } catch (e) {
-                    // If status is not JSON or doesn't have expected structure, count as error
-                    nErrorFallbackRequestsLastHour++;
                 }
             }
         }
-    });
-    
-    // Process cache requests
-    cacheRequestsMap.forEach(entry => {
-        // Process ALL entries for histograms
-        processEntryForMethodTimes(entry);
-        
-        // Only count last hour stats for hourly metrics
-        if (parseInt(entry.epoch) >= oneHourAgo) {
-            nCacheRequestsLastHour++;
-            totalCacheTime += entry.elapsed;
-            if (entry.status !== 'success') {
-                try {
-                    const statusObj = JSON.parse(entry.status);
-                    if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
-                        nWarningCacheRequestsLastHour++;
-                    } else {
+    } catch {}
+
+    // --- Cache log ---
+    try {
+        const lines = fs.readFileSync(cacheLogPath, 'utf8').trim().split('\n');
+        for (const line of lines) {
+            const [timestamp, epoch, requester, method, , elapsed, status] = line.split('|');
+            const epochNum = parseInt(epoch);
+            const elapsedNum = parseFloat(elapsed);
+            processEntryForMethodTimes(method, elapsedNum, requester);
+            if (epochNum >= oneHourAgo) {
+                nCacheRequestsLastHour++;
+                cacheRequestTimesLastHour.push(elapsedNum);
+                if (status !== 'success') {
+                    try {
+                        const statusObj = JSON.parse(status);
+                        if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
+                            nWarningCacheRequestsLastHour++;
+                        } else {
+                            nErrorCacheRequestsLastHour++;
+                        }
+                    } catch {
                         nErrorCacheRequestsLastHour++;
                     }
-                } catch (e) {
-                    // If status is not JSON or doesn't have expected structure, count as error
-                    nErrorCacheRequestsLastHour++;
                 }
             }
         }
-    });
+    } catch {}
 
-    // Process pool requests
-    poolRequestsMap.forEach(entry => {
-        // Process ALL entries for histograms
-        processEntryForMethodTimes(entry);
-        
-        // Only count last hour stats for hourly metrics
-        if (parseInt(entry.epoch) >= oneHourAgo) {
-            nPoolRequestsLastHour++;
-            totalPoolTime += entry.elapsed;
-            if (entry.status !== 'success') {
-                try {
-                    const statusObj = JSON.parse(entry.status);
-                    if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
-                        nWarningPoolRequestsLastHour++;
-                    } else {
+    // --- Pool log ---
+    try {
+        const lines = fs.readFileSync(poolLogPath, 'utf8').trim().split('\n');
+        for (const line of lines) {
+            const [timestamp, epoch, requester, method, , elapsed, status] = line.split('|');
+            const epochNum = parseInt(epoch);
+            const elapsedNum = parseFloat(elapsed);
+            processEntryForMethodTimes(method, elapsedNum, requester);
+            if (epochNum >= oneHourAgo) {
+                nPoolRequestsLastHour++;
+                poolRequestTimesLastHour.push(elapsedNum);
+                if (status !== 'success') {
+                    try {
+                        const statusObj = JSON.parse(status);
+                        if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
+                            nWarningPoolRequestsLastHour++;
+                        } else {
+                            nErrorPoolRequestsLastHour++;
+                        }
+                    } catch {
                         nErrorPoolRequestsLastHour++;
                     }
-                } catch (e) {
-                    // If status is not JSON or doesn't have expected structure, count as error
-                    nErrorPoolRequestsLastHour++;
                 }
             }
         }
-    });
+    } catch {}
 
-    // Process node durations from poolNodesMap
-    poolNodesMap.forEach(entry => {
-        const nodeId = entry.nodeId;
-        if (!nodeTimes[nodeId]) {
-            nodeTimes[nodeId] = [];
+    // --- PoolNodes log (for node histograms) ---
+    try {
+        const lines = fs.readFileSync(poolNodesLogPath, 'utf8').trim().split('\n');
+        for (const line of lines) {
+            const [, , nodeId, , , , duration] = line.split('|');
+            if (!nodeId) continue;
+            const durationNum = parseFloat(duration);
+            if (!nodeTimes[nodeId]) nodeTimes[nodeId] = [];
+            nodeTimes[nodeId].push(durationNum);
         }
-        nodeTimes[nodeId].push(parseFloat(entry.duration));
-    });
-    
-    // Calculate percentiles for each method and origin using ALL data
+    } catch {}
+
+    // --- Calculate histograms ---
     const methodDurationHist = {};
     Object.entries(methodTimes).forEach(([method, times]) => {
         methodDurationHist[method] = calculatePercentiles(times, [1, 25, 50, 75, 99]);
     });
-
     const originDurationHist = {};
     Object.entries(originTimes).forEach(([origin, times]) => {
         originDurationHist[origin] = calculatePercentiles(times, [1, 25, 50, 75, 99]);
     });
-
-    // Calculate percentiles for each node using ALL timing data
     const nodeDurationHist = {};
-    poolNodesTimingMap.forEach((times, nodeId) => {
+    Object.entries(nodeTimes).forEach(([nodeId, times]) => {
         nodeDurationHist[nodeId] = calculatePercentiles(times, [1, 25, 50, 75, 99]);
     });
-    
-    // Collect request times for each type of request from the last hour
-    const fallbackRequestTimesLastHour = [];
-    const cacheRequestTimesLastHour = [];
-    const poolRequestTimesLastHour = [];
-    
-    // Collect fallback request times from the last hour
-    fallbackRequestsMap.forEach(entry => {
-        if (parseInt(entry.epoch) >= oneHourAgo) {
-            fallbackRequestTimesLastHour.push(entry.elapsed);
-        }
-    });
-    
-    // Collect cache request times from the last hour
-    cacheRequestsMap.forEach(entry => {
-        if (parseInt(entry.epoch) >= oneHourAgo) {
-            cacheRequestTimesLastHour.push(entry.elapsed);
-        }
-    });
-    
-    // Collect pool request times from the last hour
-    poolRequestsMap.forEach(entry => {
-        if (parseInt(entry.epoch) >= oneHourAgo) {
-            poolRequestTimesLastHour.push(entry.elapsed);
-        }
-    });
-    
-    // Calculate true medians using the calculatePercentiles function
-    const medFallbackRequestTimeLastHour = fallbackRequestTimesLastHour.length > 0 ? 
-        calculatePercentiles(fallbackRequestTimesLastHour, [50]).p50 : 0;
-    const medCacheRequestTimeLastHour = cacheRequestTimesLastHour.length > 0 ? 
-        calculatePercentiles(cacheRequestTimesLastHour, [50]).p50 : 0;
-    const medPoolRequestTimeLastHour = poolRequestTimesLastHour.length > 0 ? 
-        calculatePercentiles(poolRequestTimesLastHour, [50]).p50 : 0;
-    
+
+    // --- Medians for last hour ---
+    const medFallbackRequestTimeLastHour = fallbackRequestTimesLastHour.length > 0 ? calculatePercentiles(fallbackRequestTimesLastHour, [50]).p50 : 0;
+    const medCacheRequestTimeLastHour = cacheRequestTimesLastHour.length > 0 ? calculatePercentiles(cacheRequestTimesLastHour, [50]).p50 : 0;
+    const medPoolRequestTimeLastHour = poolRequestTimesLastHour.length > 0 ? calculatePercentiles(poolRequestTimesLastHour, [50]).p50 : 0;
+
     return {
         timestamp: Date.now(),
         nTotalRequestsLastHour: nFallbackRequestsLastHour + nCacheRequestsLastHour + nPoolRequestsLastHour,
