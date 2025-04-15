@@ -11,6 +11,9 @@ const poolRequestsMap = new Map();
 const poolNodesMap = new Map();
 const poolCompareResultsMap = new Map();
 
+const { maxLogEntries } = require('./config');
+
+
 // Store request history data
 const requestHistory = new Map();
 
@@ -46,28 +49,50 @@ function calculatePercentiles(values, percentiles) {
     return results;
 }
 
+// Helper function to trim a map to the most recent entries
+function trimMapToRecentEntries(map, maxEntries) {
+    if (map.size <= maxEntries) return;
+    
+    // Convert to array, sort by epoch (descending), and take only the most recent entries
+    const entries = Array.from(map.entries())
+        .sort((a, b) => parseInt(b[1].epoch) - parseInt(a[1].epoch))
+        .slice(0, maxEntries);
+    
+    // Clear the map and add back only the most recent entries
+    map.clear();
+    entries.forEach(([key, value]) => map.set(key, value));
+}
+
 function parseLogFile(logPath, targetMap) {
     try {
         const fileContent = fs.readFileSync(logPath, 'utf8');
         const lines = fileContent.trim().split('\n');
         let newEntriesCount = 0;
         
-        lines.forEach(line => {
+        // Only process the most recent lines
+        const startIndex = Math.max(0, lines.length - maxLogEntries);
+        const recentLines = lines.slice(startIndex);
+        
+        // Clear the existing map since we're reading fresh data
+        targetMap.clear();
+        
+        recentLines.forEach((line, index) => {
             const [timestamp, epoch, requester, method, params, elapsed, status] = line.split('|');
             
-            // Only add entries that aren't already in the map
-            if (!targetMap.has(epoch)) {
-                targetMap.set(epoch, {
-                    timestamp,
-                    epoch,
-                    requester: requester || '',
-                    method,
-                    params,
-                    elapsed: parseFloat(elapsed),
-                    status
-                });
-                newEntriesCount++;
-            }
+            // Use both epoch and index to create a unique key
+            const key = `${epoch}-${startIndex + index}`;
+            
+            targetMap.set(key, {
+                timestamp,
+                epoch,
+                requester: requester || '',
+                method,
+                params,
+                elapsed: parseFloat(elapsed),
+                status,
+                lineIndex: startIndex + index
+            });
+            newEntriesCount++;
         });
         
         if (newEntriesCount > 0) {
@@ -86,26 +111,31 @@ function parsePoolNodeLog(logPath, targetMap) {
         const lines = fileContent.trim().split('\n');
         let newEntriesCount = 0;
         
-        lines.forEach(line => {
+        // Only process the most recent lines
+        const startIndex = Math.max(0, lines.length - maxLogEntries);
+        const recentLines = lines.slice(startIndex);
+        
+        // Clear the existing map since we're reading fresh data
+        targetMap.clear();
+        
+        recentLines.forEach((line, index) => {
             const [timestamp, epoch, nodeId, owner, method, params, duration, status] = line.split('|');
             
-            // Create a composite key using epoch and nodeId
-            const compositeKey = `${epoch}-${nodeId}`;
+            // Create a composite key using epoch, nodeId and index
+            const key = `${epoch}-${nodeId}-${startIndex + index}`;
             
-            // Only add entries that aren't already in the map
-            if (!targetMap.has(compositeKey)) {
-                targetMap.set(compositeKey, {
-                    timestamp,
-                    epoch,
-                    nodeId,
-                    owner,
-                    method,
-                    params,
-                    duration: parseFloat(duration),
-                    status
-                });
-                newEntriesCount++;
-            }
+            targetMap.set(key, {
+                timestamp,
+                epoch,
+                nodeId,
+                owner,
+                method,
+                params,
+                duration: parseFloat(duration),
+                status,
+                lineIndex: startIndex + index
+            });
+            newEntriesCount++;
         });
         
         if (newEntriesCount > 0) {
@@ -122,38 +152,46 @@ function parsePoolCompareResultsLog(logPath, targetMap) {
         const lines = fileContent.trim().split('\n');
         let newEntriesCount = 0;
         
-        lines.forEach(line => {
+        // Only process the most recent lines
+        const startIndex = Math.max(0, lines.length - maxLogEntries);
+        const recentLines = lines.slice(startIndex);
+        
+        // Clear the existing map since we're reading fresh data
+        targetMap.clear();
+        
+        recentLines.forEach((line, index) => {
             const [
                 timestamp, epoch, resultsMatch, mismatchedNode, mismatchedOwner, 
                 mismatchedResults, nodeId1, nodeResult1, nodeId2, nodeResult2, 
                 nodeId3, nodeResult3, method, params
             ] = line.split('|');
             
-            // Only add entries that aren't already in the map
-            if (!targetMap.has(epoch)) {
-                // Parse mismatchedResults from string to array, handling empty case
-                const parsedMismatchedResults = mismatchedResults === '[]' ? 
-                    [] : 
-                    JSON.parse(mismatchedResults);
-                
-                targetMap.set(epoch, {
-                    timestamp,
-                    epoch,
-                    resultsMatch: resultsMatch === 'true',
-                    mismatchedNode: mismatchedNode === 'nan' ? null : mismatchedNode,
-                    mismatchedOwner: mismatchedOwner === 'nan' ? null : mismatchedOwner,
-                    mismatchedResults: parsedMismatchedResults,
-                    nodeId1,
-                    nodeResult1: JSON.parse(nodeResult1),
-                    nodeId2,
-                    nodeResult2: JSON.parse(nodeResult2),
-                    nodeId3,
-                    nodeResult3: JSON.parse(nodeResult3),
-                    method,
-                    params
-                });
-                newEntriesCount++;
-            }
+            // Create a composite key using epoch and index
+            const key = `${epoch}-${startIndex + index}`;
+            
+            // Parse mismatchedResults from string to array, handling empty case
+            const parsedMismatchedResults = mismatchedResults === '[]' ? 
+                [] : 
+                JSON.parse(mismatchedResults);
+            
+            targetMap.set(key, {
+                timestamp,
+                epoch,
+                resultsMatch: resultsMatch === 'true',
+                mismatchedNode: mismatchedNode === 'nan' ? null : mismatchedNode,
+                mismatchedOwner: mismatchedOwner === 'nan' ? null : mismatchedOwner,
+                mismatchedResults: parsedMismatchedResults,
+                nodeId1,
+                nodeResult1: JSON.parse(nodeResult1),
+                nodeId2,
+                nodeResult2: JSON.parse(nodeResult2),
+                nodeId3,
+                nodeResult3: JSON.parse(nodeResult3),
+                method,
+                params,
+                lineIndex: startIndex + index
+            });
+            newEntriesCount++;
         });
         
         if (newEntriesCount > 0) {
