@@ -2,16 +2,14 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 
-const { parseInterval } = require('./config');
-const { logPort } = require('./config');
-
 const fallbackRequestsMap = new Map();
 const cacheRequestsMap = new Map();
 const poolRequestsMap = new Map();
 const poolNodesMap = new Map();
+const poolNodesTimingMap = new Map();
 const poolCompareResultsMap = new Map();
 
-const { maxLogEntries } = require('./config');
+const {logPort, maxLogEntries, parseInterval, poolNodeTimingParseInterval } = require('./config');
 
 // Track last processed line index for each file
 const lastProcessedIndexes = {
@@ -55,20 +53,6 @@ function calculatePercentiles(values, percentiles) {
     });
     
     return results;
-}
-
-// Helper function to trim a map to the most recent entries
-function trimMapToRecentEntries(map, maxEntries) {
-    if (map.size <= maxEntries) return;
-    
-    // Convert to array, sort by epoch (descending), and take only the most recent entries
-    const entries = Array.from(map.entries())
-        .sort((a, b) => parseInt(b[1].epoch) - parseInt(a[1].epoch))
-        .slice(0, maxEntries);
-    
-    // Clear the map and add back only the most recent entries
-    map.clear();
-    entries.forEach(([key, value]) => map.set(key, value));
 }
 
 function parseLogFile(logPath, targetMap, logType) {
@@ -531,9 +515,9 @@ function getDashboardMetrics() {
         originDurationHist[origin] = calculatePercentiles(times, [1, 25, 50, 75, 99]);
     });
 
-    // Calculate percentiles for each node using ALL data
+    // Calculate percentiles for each node using ALL timing data
     const nodeDurationHist = {};
-    Object.entries(nodeTimes).forEach(([nodeId, times]) => {
+    poolNodesTimingMap.forEach((times, nodeId) => {
         nodeDurationHist[nodeId] = calculatePercentiles(times, [1, 25, 50, 75, 99]);
     });
     
@@ -685,6 +669,31 @@ function calculateNodeTimingMetrics() {
     cachedNodeTimingMetrics = result;
 }
 
+function parsePoolNodeTimingLog(logPath) {
+    try {
+        const fileContent = fs.readFileSync(logPath, 'utf8');
+        const lines = fileContent.trim().split('\n');
+        let newEntriesCount = 0;
+        
+        lines.forEach((line) => {
+            const [, , nodeId, , , , duration] = line.split('|');
+            
+            if (!poolNodesTimingMap.has(nodeId)) {
+                poolNodesTimingMap.set(nodeId, []);
+            }
+            
+            poolNodesTimingMap.get(nodeId).push(parseFloat(duration));
+            newEntriesCount++;
+        });
+        
+        if (newEntriesCount > 0) {
+            console.log(`Added ${newEntriesCount} timing entries to poolNodesTimingMap. Total nodes: ${poolNodesTimingMap.size}`);
+        }
+    } catch (error) {
+        console.error('Error parsing poolNodesTimingMap log file:', error);
+    }
+}
+
 // Create HTTPS server to serve map contents
 const server = https.createServer(
   {
@@ -733,6 +742,7 @@ parseLogFile(fallbackLogPath, fallbackRequestsMap, 'fallback');
 parseLogFile(cacheLogPath, cacheRequestsMap, 'cache');
 parseLogFile(poolLogPath, poolRequestsMap, 'pool');
 parsePoolNodeLog(poolNodesLogPath, poolNodesMap);
+parsePoolNodeTimingLog(poolNodesLogPath);
 parsePoolCompareResultsLog(poolCompareResultsLogPath, poolCompareResultsMap);
 
 // Calculate initial node timing metrics after poolNodesMap is populated
@@ -766,3 +776,7 @@ setInterval(() => {
     parsePoolCompareResultsLog(poolCompareResultsLogPath, poolCompareResultsMap);
     updateCachedMetrics();
 }, parseInterval);
+
+setInterval(() => {
+    parsePoolNodeTimingLog(poolNodesLogPath);
+}, poolNodeTimingParseInterval);
