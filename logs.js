@@ -13,6 +13,14 @@ const poolCompareResultsMap = new Map();
 
 const { maxLogEntries } = require('./config');
 
+// Track last processed line index for each file
+const lastProcessedIndexes = {
+    fallback: -1,
+    cache: -1,
+    pool: -1,
+    poolNodes: -1,
+    poolCompareResults: -1
+};
 
 // Store request history data
 const requestHistory = new Map();
@@ -63,24 +71,33 @@ function trimMapToRecentEntries(map, maxEntries) {
     entries.forEach(([key, value]) => map.set(key, value));
 }
 
-function parseLogFile(logPath, targetMap) {
+function parseLogFile(logPath, targetMap, logType) {
     try {
         const fileContent = fs.readFileSync(logPath, 'utf8');
         const lines = fileContent.trim().split('\n');
         let newEntriesCount = 0;
         
-        // Only process the most recent lines
-        const startIndex = Math.max(0, lines.length - maxLogEntries);
-        const recentLines = lines.slice(startIndex);
+        // Calculate start and end indexes for processing
+        const totalLines = lines.length;
+        const oldestAllowedIndex = Math.max(0, totalLines - maxLogEntries);
+        const lastProcessedIndex = lastProcessedIndexes[logType];
         
-        // Clear the existing map since we're reading fresh data
-        targetMap.clear();
+        // If we need to start fresh due to rotation or first run
+        if (lastProcessedIndex >= totalLines || lastProcessedIndex < oldestAllowedIndex - 1) {
+            targetMap.clear();
+            lastProcessedIndexes[logType] = oldestAllowedIndex - 1;
+        }
         
-        recentLines.forEach((line, index) => {
+        // Process only new lines, starting from the last processed index
+        const startIndex = Math.max(oldestAllowedIndex, lastProcessedIndex + 1);
+        const newLines = lines.slice(startIndex);
+        
+        newLines.forEach((line, index) => {
             const [timestamp, epoch, requester, method, params, elapsed, status] = line.split('|');
+            const absoluteIndex = startIndex + index;
             
-            // Use both epoch and index to create a unique key
-            const key = `${epoch}-${startIndex + index}`;
+            // Use both epoch and absolute line index to create a unique key
+            const key = `${epoch}-${absoluteIndex}`;
             
             targetMap.set(key, {
                 timestamp,
@@ -90,10 +107,20 @@ function parseLogFile(logPath, targetMap) {
                 params,
                 elapsed: parseFloat(elapsed),
                 status,
-                lineIndex: startIndex + index
+                lineIndex: absoluteIndex
             });
             newEntriesCount++;
+            lastProcessedIndexes[logType] = absoluteIndex;
         });
+        
+        // Remove entries that are too old
+        if (targetMap.size > maxLogEntries) {
+            const entriesToRemove = Array.from(targetMap.entries())
+                .sort((a, b) => a[1].lineIndex - b[1].lineIndex)
+                .slice(0, targetMap.size - maxLogEntries);
+            
+            entriesToRemove.forEach(([key]) => targetMap.delete(key));
+        }
         
         if (newEntriesCount > 0) {
             const mapName = targetMap === fallbackRequestsMap ? 'fallbackRequestsMap' : targetMap === cacheRequestsMap ? 'cacheRequestsMap' : 'poolRequestsMap';
@@ -111,18 +138,27 @@ function parsePoolNodeLog(logPath, targetMap) {
         const lines = fileContent.trim().split('\n');
         let newEntriesCount = 0;
         
-        // Only process the most recent lines
-        const startIndex = Math.max(0, lines.length - maxLogEntries);
-        const recentLines = lines.slice(startIndex);
+        // Calculate start and end indexes for processing
+        const totalLines = lines.length;
+        const oldestAllowedIndex = Math.max(0, totalLines - maxLogEntries);
+        const lastProcessedIndex = lastProcessedIndexes.poolNodes;
         
-        // Clear the existing map since we're reading fresh data
-        targetMap.clear();
+        // If we need to start fresh due to rotation or first run
+        if (lastProcessedIndex >= totalLines || lastProcessedIndex < oldestAllowedIndex - 1) {
+            targetMap.clear();
+            lastProcessedIndexes.poolNodes = oldestAllowedIndex - 1;
+        }
         
-        recentLines.forEach((line, index) => {
+        // Process only new lines, starting from the last processed index
+        const startIndex = Math.max(oldestAllowedIndex, lastProcessedIndex + 1);
+        const newLines = lines.slice(startIndex);
+        
+        newLines.forEach((line, index) => {
             const [timestamp, epoch, nodeId, owner, method, params, duration, status] = line.split('|');
+            const absoluteIndex = startIndex + index;
             
-            // Create a composite key using epoch, nodeId and index
-            const key = `${epoch}-${nodeId}-${startIndex + index}`;
+            // Create a composite key using epoch, nodeId and absolute line index
+            const key = `${epoch}-${nodeId}-${absoluteIndex}`;
             
             targetMap.set(key, {
                 timestamp,
@@ -133,10 +169,20 @@ function parsePoolNodeLog(logPath, targetMap) {
                 params,
                 duration: parseFloat(duration),
                 status,
-                lineIndex: startIndex + index
+                lineIndex: absoluteIndex
             });
             newEntriesCount++;
+            lastProcessedIndexes.poolNodes = absoluteIndex;
         });
+        
+        // Remove entries that are too old
+        if (targetMap.size > maxLogEntries) {
+            const entriesToRemove = Array.from(targetMap.entries())
+                .sort((a, b) => a[1].lineIndex - b[1].lineIndex)
+                .slice(0, targetMap.size - maxLogEntries);
+            
+            entriesToRemove.forEach(([key]) => targetMap.delete(key));
+        }
         
         if (newEntriesCount > 0) {
             console.log(`Added ${newEntriesCount} new entries to poolNodesMap. Total entries: ${targetMap.size}`);
@@ -152,22 +198,31 @@ function parsePoolCompareResultsLog(logPath, targetMap) {
         const lines = fileContent.trim().split('\n');
         let newEntriesCount = 0;
         
-        // Only process the most recent lines
-        const startIndex = Math.max(0, lines.length - maxLogEntries);
-        const recentLines = lines.slice(startIndex);
+        // Calculate start and end indexes for processing
+        const totalLines = lines.length;
+        const oldestAllowedIndex = Math.max(0, totalLines - maxLogEntries);
+        const lastProcessedIndex = lastProcessedIndexes.poolCompareResults;
         
-        // Clear the existing map since we're reading fresh data
-        targetMap.clear();
+        // If we need to start fresh due to rotation or first run
+        if (lastProcessedIndex >= totalLines || lastProcessedIndex < oldestAllowedIndex - 1) {
+            targetMap.clear();
+            lastProcessedIndexes.poolCompareResults = oldestAllowedIndex - 1;
+        }
         
-        recentLines.forEach((line, index) => {
+        // Process only new lines, starting from the last processed index
+        const startIndex = Math.max(oldestAllowedIndex, lastProcessedIndex + 1);
+        const newLines = lines.slice(startIndex);
+        
+        newLines.forEach((line, index) => {
             const [
                 timestamp, epoch, resultsMatch, mismatchedNode, mismatchedOwner, 
                 mismatchedResults, nodeId1, nodeResult1, nodeId2, nodeResult2, 
                 nodeId3, nodeResult3, method, params
             ] = line.split('|');
+            const absoluteIndex = startIndex + index;
             
-            // Create a composite key using epoch and index
-            const key = `${epoch}-${startIndex + index}`;
+            // Create a composite key using epoch and absolute line index
+            const key = `${epoch}-${absoluteIndex}`;
             
             // Parse mismatchedResults from string to array, handling empty case
             const parsedMismatchedResults = mismatchedResults === '[]' ? 
@@ -189,10 +244,20 @@ function parsePoolCompareResultsLog(logPath, targetMap) {
                 nodeResult3: JSON.parse(nodeResult3),
                 method,
                 params,
-                lineIndex: startIndex + index
+                lineIndex: absoluteIndex
             });
             newEntriesCount++;
+            lastProcessedIndexes.poolCompareResults = absoluteIndex;
         });
+        
+        // Remove entries that are too old
+        if (targetMap.size > maxLogEntries) {
+            const entriesToRemove = Array.from(targetMap.entries())
+                .sort((a, b) => a[1].lineIndex - b[1].lineIndex)
+                .slice(0, targetMap.size - maxLogEntries);
+            
+            entriesToRemove.forEach(([key]) => targetMap.delete(key));
+        }
         
         if (newEntriesCount > 0) {
             console.log(`Added ${newEntriesCount} new entries to poolCompareResultsMap. Total entries: ${targetMap.size}`);
@@ -607,9 +672,9 @@ function updateCachedMetrics() {
 }
 
 // Initial processing
-parseLogFile(fallbackLogPath, fallbackRequestsMap);
-parseLogFile(cacheLogPath, cacheRequestsMap);
-parseLogFile(poolLogPath, poolRequestsMap);
+parseLogFile(fallbackLogPath, fallbackRequestsMap, 'fallback');
+parseLogFile(cacheLogPath, cacheRequestsMap, 'cache');
+parseLogFile(poolLogPath, poolRequestsMap, 'pool');
 parsePoolNodeLog(poolNodesLogPath, poolNodesMap);
 parsePoolCompareResultsLog(poolCompareResultsLogPath, poolCompareResultsMap);
 
@@ -637,9 +702,9 @@ setInterval(() => {
         lastProcessedHour = currentHour;
     }
     
-    parseLogFile(fallbackLogPath, fallbackRequestsMap);
-    parseLogFile(cacheLogPath, cacheRequestsMap);
-    parseLogFile(poolLogPath, poolRequestsMap);
+    parseLogFile(fallbackLogPath, fallbackRequestsMap, 'fallback');
+    parseLogFile(cacheLogPath, cacheRequestsMap, 'cache');
+    parseLogFile(poolLogPath, poolRequestsMap, 'pool');
     parsePoolNodeLog(poolNodesLogPath, poolNodesMap);
     parsePoolCompareResultsLog(poolCompareResultsLogPath, poolCompareResultsMap);
     updateCachedMetrics();
