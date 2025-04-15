@@ -203,9 +203,8 @@ function parsePoolCompareResultsLog(logPath, targetMap) {
         const oldestAllowedIndex = Math.max(0, totalLines - maxLogEntries);
         const lastProcessedIndex = lastProcessedIndexes.poolCompareResults;
         
-        // If we need to start fresh due to rotation or first run
+        // First run or log rotation case
         if (lastProcessedIndex >= totalLines || lastProcessedIndex < oldestAllowedIndex - 1) {
-            targetMap.clear();
             lastProcessedIndexes.poolCompareResults = oldestAllowedIndex - 1;
         }
         
@@ -213,13 +212,26 @@ function parsePoolCompareResultsLog(logPath, targetMap) {
         const startIndex = Math.max(oldestAllowedIndex, lastProcessedIndex + 1);
         const newLines = lines.slice(startIndex);
         
-        newLines.forEach((line, index) => {
+        // Arrays to hold all entries (existing + new)
+        const matchedEntries = [];
+        const mismatchedEntries = [];
+        
+        // First, categorize existing entries
+        targetMap.forEach((value, key) => {
+            if (value.resultsMatch) {
+                matchedEntries.push({ key, value });
+            } else {
+                mismatchedEntries.push({ key, value });
+            }
+        });
+        
+        // Helper function to parse and categorize an entry
+        const parseEntry = (line, absoluteIndex) => {
             const [
                 timestamp, epoch, resultsMatch, mismatchedNode, mismatchedOwner, 
                 mismatchedResults, nodeId1, nodeResult1, nodeId2, nodeResult2, 
                 nodeId3, nodeResult3, method, params
             ] = line.split('|');
-            const absoluteIndex = startIndex + index;
             
             // Create a composite key using epoch and absolute line index
             const key = `${epoch}-${absoluteIndex}`;
@@ -229,38 +241,72 @@ function parsePoolCompareResultsLog(logPath, targetMap) {
                 [] : 
                 JSON.parse(mismatchedResults);
             
-            targetMap.set(key, {
-                timestamp,
-                epoch,
-                resultsMatch: resultsMatch === 'true',
-                mismatchedNode: mismatchedNode === 'nan' ? null : mismatchedNode,
-                mismatchedOwner: mismatchedOwner === 'nan' ? null : mismatchedOwner,
-                mismatchedResults: parsedMismatchedResults,
-                nodeId1,
-                nodeResult1: JSON.parse(nodeResult1),
-                nodeId2,
-                nodeResult2: JSON.parse(nodeResult2),
-                nodeId3,
-                nodeResult3: JSON.parse(nodeResult3),
-                method,
-                params,
-                lineIndex: absoluteIndex
-            });
+            const entry = {
+                key,
+                value: {
+                    timestamp,
+                    epoch,
+                    resultsMatch: resultsMatch === 'true',
+                    mismatchedNode: mismatchedNode === 'nan' ? null : mismatchedNode,
+                    mismatchedOwner: mismatchedOwner === 'nan' ? null : mismatchedOwner,
+                    mismatchedResults: parsedMismatchedResults,
+                    nodeId1,
+                    nodeResult1: JSON.parse(nodeResult1),
+                    nodeId2,
+                    nodeResult2: JSON.parse(nodeResult2),
+                    nodeId3,
+                    nodeResult3: JSON.parse(nodeResult3),
+                    method,
+                    params,
+                    lineIndex: absoluteIndex
+                }
+            };
+            
+            if (resultsMatch === 'true') {
+                matchedEntries.push(entry);
+            } else {
+                mismatchedEntries.push(entry);
+            }
             newEntriesCount++;
+        };
+        
+        // Process new lines
+        newLines.forEach((line, index) => {
+            const absoluteIndex = startIndex + index;
+            parseEntry(line, absoluteIndex);
             lastProcessedIndexes.poolCompareResults = absoluteIndex;
         });
         
-        // Remove entries that are too old
-        if (targetMap.size > maxLogEntries) {
-            const entriesToRemove = Array.from(targetMap.entries())
-                .sort((a, b) => a[1].lineIndex - b[1].lineIndex)
-                .slice(0, targetMap.size - maxLogEntries);
-            
-            entriesToRemove.forEach(([key]) => targetMap.delete(key));
-        }
+        // Sort both arrays by timestamp (newest first)
+        const sortByTimestamp = (a, b) => {
+            const timeA = new Date(a.value.timestamp).getTime();
+            const timeB = new Date(b.value.timestamp).getTime();
+            if (timeA !== timeB) {
+                return timeB - timeA;
+            }
+            return b.value.lineIndex - a.value.lineIndex;
+        };
+        
+        matchedEntries.sort(sortByTimestamp);
+        mismatchedEntries.sort(sortByTimestamp);
+        
+        // Clear the map and add entries
+        targetMap.clear();
+        
+        // Add all mismatched entries
+        mismatchedEntries.forEach(({key, value}) => {
+            targetMap.set(key, value);
+        });
+        
+        // Add the most recent matched entries up to maxLogEntries
+        matchedEntries.slice(0, maxLogEntries).forEach(({key, value}) => {
+            targetMap.set(key, value);
+        });
         
         if (newEntriesCount > 0) {
-            console.log(`Added ${newEntriesCount} new entries to poolCompareResultsMap. Total entries: ${targetMap.size}`);
+            const matchedCount = Math.min(matchedEntries.length, maxLogEntries);
+            console.log(`Added ${newEntriesCount} new entries to poolCompareResultsMap. ` +
+                       `Total entries: ${targetMap.size} (${mismatchedEntries.length} mismatched + ${matchedCount} matched results)`);
         }
     } catch (error) {
         console.error('Error parsing poolCompareResultsMap log file:', error);
@@ -268,7 +314,7 @@ function parsePoolCompareResultsLog(logPath, targetMap) {
 }
 
 function getMapContents(targetMap) {
-  return Array.from(targetMap.entries()).map(([key, entry]) => {
+  let entries = Array.from(targetMap.entries()).map(([key, entry]) => {
       // For poolNodesMap entries, the key is a composite of epoch-nodeId
       // For other maps, the key is just the epoch
       const isPoolNodesMap = 'nodeId' in entry;
@@ -277,6 +323,13 @@ function getMapContents(targetMap) {
           ...entry
       };
   });
+
+  // Special handling for poolCompareResultsMap - reverse the order
+  if (targetMap === poolCompareResultsMap) {
+      entries.reverse();
+  }
+
+  return entries;
 }
 
 function getStartOfHour(timestamp) {
