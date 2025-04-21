@@ -182,18 +182,16 @@ function parsePoolCompareResultsLog(logPath, targetMap) {
         const lines = fileContent.trim().split('\n');
         let newEntriesCount = 0;
         
-        // Calculate start and end indexes for processing
-        const totalLines = lines.length;
-        const oldestAllowedIndex = Math.max(0, totalLines - maxLogEntries);
+        // Process the entire file - no line limit for mismatched results
         const lastProcessedIndex = lastProcessedIndexes.poolCompareResults;
         
         // First run or log rotation case
-        if (lastProcessedIndex >= totalLines || lastProcessedIndex < oldestAllowedIndex - 1) {
-            lastProcessedIndexes.poolCompareResults = oldestAllowedIndex - 1;
+        if (lastProcessedIndex >= lines.length) {
+            lastProcessedIndexes.poolCompareResults = -1;
         }
         
-        // Process only new lines, starting from the last processed index
-        const startIndex = Math.max(oldestAllowedIndex, lastProcessedIndex + 1);
+        // Process all new lines since last check
+        const startIndex = lastProcessedIndex + 1;
         const newLines = lines.slice(startIndex);
         
         // Array to hold mismatched entries
