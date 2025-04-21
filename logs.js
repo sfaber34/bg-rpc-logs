@@ -196,15 +196,12 @@ function parsePoolCompareResultsLog(logPath, targetMap) {
         const startIndex = Math.max(oldestAllowedIndex, lastProcessedIndex + 1);
         const newLines = lines.slice(startIndex);
         
-        // Arrays to hold all entries (existing + new)
-        const matchedEntries = [];
+        // Array to hold mismatched entries
         const mismatchedEntries = [];
         
-        // First, categorize existing entries
+        // First, keep existing mismatched entries
         targetMap.forEach((value, key) => {
-            if (value.resultsMatch) {
-                matchedEntries.push({ key, value });
-            } else {
+            if (!value.resultsMatch) {
                 mismatchedEntries.push({ key, value });
             }
         });
@@ -216,6 +213,11 @@ function parsePoolCompareResultsLog(logPath, targetMap) {
                 mismatchedResults, nodeId1, nodeResult1, nodeId2, nodeResult2, 
                 nodeId3, nodeResult3, method, params
             ] = line.split('|');
+            
+            // Skip if results match - we only want mismatches
+            if (resultsMatch === 'true') {
+                return;
+            }
             
             // Create a composite key using epoch and absolute line index
             const key = `${epoch}-${absoluteIndex}`;
@@ -230,7 +232,7 @@ function parsePoolCompareResultsLog(logPath, targetMap) {
                 value: {
                     timestamp,
                     epoch,
-                    resultsMatch: resultsMatch === 'true',
+                    resultsMatch: false,
                     mismatchedNode: mismatchedNode === 'nan' ? null : mismatchedNode,
                     mismatchedOwner: mismatchedOwner === 'nan' ? null : mismatchedOwner,
                     mismatchedResults: parsedMismatchedResults,
@@ -246,11 +248,7 @@ function parsePoolCompareResultsLog(logPath, targetMap) {
                 }
             };
             
-            if (resultsMatch === 'true') {
-                matchedEntries.push(entry);
-            } else {
-                mismatchedEntries.push(entry);
-            }
+            mismatchedEntries.push(entry);
             newEntriesCount++;
         };
         
@@ -261,40 +259,26 @@ function parsePoolCompareResultsLog(logPath, targetMap) {
             lastProcessedIndexes.poolCompareResults = absoluteIndex;
         });
         
-        // Sort both arrays by timestamp (newest first)
-        const sortByTimestamp = (a, b) => {
+        // Sort mismatched entries by timestamp (newest first)
+        mismatchedEntries.sort((a, b) => {
             const timeA = new Date(a.value.timestamp).getTime();
             const timeB = new Date(b.value.timestamp).getTime();
             if (timeA !== timeB) {
                 return timeB - timeA;
             }
             return b.value.lineIndex - a.value.lineIndex;
-        };
-        
-        matchedEntries.sort(sortByTimestamp);
-        mismatchedEntries.sort(sortByTimestamp);
+        });
         
         // Clear the map
         targetMap.clear();
         
-        // Combine and sort all entries we want to keep
-        const allEntries = [
-            ...mismatchedEntries, // Keep all mismatched entries
-            ...matchedEntries.slice(0, maxLogEntries) // Keep only up to maxLogEntries matched entries
-        ];
-        
-        // Sort all entries together by timestamp
-        allEntries.sort(sortByTimestamp);
-        
-        // Add all entries to the map in sorted order
-        allEntries.forEach(({key, value}) => {
+        // Add all mismatched entries to the map in sorted order
+        mismatchedEntries.forEach(({key, value}) => {
             targetMap.set(key, value);
         });
         
         if (newEntriesCount > 0) {
-            const matchedCount = Math.min(matchedEntries.length, maxLogEntries);
-            console.log(`Added ${newEntriesCount} new entries to poolCompareResultsMap. ` +
-                       `Total entries: ${targetMap.size} (${mismatchedEntries.length} mismatched + ${matchedCount} matched results)`);
+            console.log(`Added ${newEntriesCount} new mismatched entries to poolCompareResultsMap. Total mismatched entries: ${targetMap.size}`);
         }
     } catch (error) {
         console.error('Error parsing poolCompareResultsMap log file:', error);
