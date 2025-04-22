@@ -374,6 +374,9 @@ function getDashboardMetrics() {
     let nCacheRequestsLastHour = 0;
     let nErrorCacheRequestsLastHour = 0;
     let nWarningCacheRequestsLastHour = 0;
+    let nCacheRequestsClientLastHour = 0;
+    let nErrorCacheRequestsClientLastHour = 0;
+    let nWarningCacheRequestsClientLastHour = 0;
     let nPoolRequestsLastHour = 0;
     let nErrorPoolRequestsLastHour = 0;
     let nWarningPoolRequestsLastHour = 0;
@@ -385,6 +388,12 @@ function getDashboardMetrics() {
     const methodTimes = {};
     const originTimes = {};
     const nodeTimes = {};
+    
+    // Arrays to store request times for different types
+    const fallbackRequestTimesLastHour = [];
+    const cacheRequestTimesLastHour = [];
+    const cacheRequestClientTimesLastHour = [];
+    const poolRequestTimesLastHour = [];
     
     // Helper function to process entries for method times - now processes ALL entries
     const processEntryForMethodTimes = (entry) => {
@@ -434,21 +443,42 @@ function getDashboardMetrics() {
         
         // Only count last hour stats for hourly metrics
         if (parseInt(entry.epoch) >= oneHourAgo) {
-            nCacheRequestsLastHour++;
-            totalCacheTime += entry.elapsed;
-            if (entry.status !== 'success') {
-                try {
-                    const statusObj = JSON.parse(entry.status);
-                    if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
-                        nWarningCacheRequestsLastHour++;
-                    } else {
+            const isClientRequest = entry.requester === 'buidlguidl-client';
+            
+            if (isClientRequest) {
+                nCacheRequestsClientLastHour++;
+                cacheRequestClientTimesLastHour.push(entry.elapsed);
+                if (entry.status !== 'success') {
+                    try {
+                        const statusObj = JSON.parse(entry.status);
+                        if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
+                            nWarningCacheRequestsClientLastHour++;
+                        } else {
+                            nErrorCacheRequestsClientLastHour++;
+                        }
+                    } catch (e) {
+                        // If status is not JSON or doesn't have expected structure, count as error
+                        nErrorCacheRequestsClientLastHour++;
+                    }
+                }
+            } else {
+                nCacheRequestsLastHour++;
+                cacheRequestTimesLastHour.push(entry.elapsed);
+                if (entry.status !== 'success') {
+                    try {
+                        const statusObj = JSON.parse(entry.status);
+                        if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
+                            nWarningCacheRequestsLastHour++;
+                        } else {
+                            nErrorCacheRequestsLastHour++;
+                        }
+                    } catch (e) {
+                        // If status is not JSON or doesn't have expected structure, count as error
                         nErrorCacheRequestsLastHour++;
                     }
-                } catch (e) {
-                    // If status is not JSON or doesn't have expected structure, count as error
-                    nErrorCacheRequestsLastHour++;
                 }
             }
+            totalCacheTime += entry.elapsed;
         }
     });
 
@@ -504,11 +534,6 @@ function getDashboardMetrics() {
     });
     
     // Collect request times for each type of request from the last hour
-    const fallbackRequestTimesLastHour = [];
-    const cacheRequestTimesLastHour = [];
-    const poolRequestTimesLastHour = [];
-    
-    // Collect fallback request times from the last hour
     fallbackRequestsMap.forEach(entry => {
         if (parseInt(entry.epoch) >= oneHourAgo) {
             fallbackRequestTimesLastHour.push(entry.elapsed);
@@ -534,6 +559,8 @@ function getDashboardMetrics() {
         calculatePercentiles(fallbackRequestTimesLastHour, [50]).p50 : 0;
     const medCacheRequestTimeLastHour = cacheRequestTimesLastHour.length > 0 ? 
         calculatePercentiles(cacheRequestTimesLastHour, [50]).p50 : 0;
+    const medCacheRequestClientTimeLastHour = cacheRequestClientTimesLastHour.length > 0 ? 
+        calculatePercentiles(cacheRequestClientTimesLastHour, [50]).p50 : 0;
     const medPoolRequestTimeLastHour = poolRequestTimesLastHour.length > 0 ? 
         calculatePercentiles(poolRequestTimesLastHour, [50]).p50 : 0;
     
@@ -542,15 +569,19 @@ function getDashboardMetrics() {
         nTotalRequestsLastHour: nFallbackRequestsLastHour + nCacheRequestsLastHour + nPoolRequestsLastHour,
         nFallbackRequestsLastHour,
         nCacheRequestsLastHour,
+        nCacheRequestsClientLastHour,
         nPoolRequestsLastHour,
         nErrorFallbackRequestsLastHour,
         nErrorCacheRequestsLastHour,
+        nErrorCacheRequestsClientLastHour,
         nErrorPoolRequestsLastHour,
         nWarningFallbackRequestsLastHour,
         nWarningCacheRequestsLastHour,
+        nWarningCacheRequestsClientLastHour,
         nWarningPoolRequestsLastHour,
         medFallbackRequestTimeLastHour,
         medCacheRequestTimeLastHour,
+        medCacheRequestClientTimeLastHour,
         medPoolRequestTimeLastHour,
         methodDurationHist,
         originDurationHist,
