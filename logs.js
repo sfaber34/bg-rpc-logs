@@ -10,6 +10,7 @@ const poolNodesTimingMap = new Map();
 const poolCompareResultsMap = new Map();
 
 const {logPort, maxLogEntries, parseInterval, poolNodeTimingParseInterval } = require('./config');
+const { ignoredErrorCodes } = require('../shared/ignoredErrorCodes');
 
 // Track last processed line index for each file
 const lastProcessedIndexes = {
@@ -351,7 +352,12 @@ function updateRequestHistory() {
             } else {
                 try {
                     const statusObj = JSON.parse(entry.status);
-                    if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
+                    const code = statusObj.error && statusObj.error.code;
+                    if (code !== undefined && ignoredErrorCodes.includes(Number(code))) {
+                        // Skip ignored error codes
+                        return;
+                    }
+                    if (code && code.toString().startsWith('-69')) {
                         hourData[`n${prefix.charAt(0).toUpperCase() + prefix.slice(1)}RequestsWarning`]++;
                     } else {
                         hourData[`n${prefix.charAt(0).toUpperCase() + prefix.slice(1)}RequestsError`]++;
@@ -423,7 +429,12 @@ function getDashboardMetrics() {
             if (entry.status !== 'success') {
                 try {
                     const statusObj = JSON.parse(entry.status);
-                    if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
+                    const code = statusObj.error && statusObj.error.code;
+                    if (code !== undefined && ignoredErrorCodes.includes(Number(code))) {
+                        // Skip ignored error codes
+                        return;
+                    }
+                    if (code && code.toString().startsWith('-69')) {
                         nWarningFallbackRequestsLastHour++;
                     } else {
                         nErrorFallbackRequestsLastHour++;
@@ -451,7 +462,12 @@ function getDashboardMetrics() {
                 if (entry.status !== 'success') {
                     try {
                         const statusObj = JSON.parse(entry.status);
-                        if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
+                        const code = statusObj.error && statusObj.error.code;
+                        if (code !== undefined && ignoredErrorCodes.includes(Number(code))) {
+                            // Skip ignored error codes
+                            return;
+                        }
+                        if (code && code.toString().startsWith('-69')) {
                             nWarningCacheRequestsClientLastHour++;
                         } else {
                             nErrorCacheRequestsClientLastHour++;
@@ -467,7 +483,12 @@ function getDashboardMetrics() {
                 if (entry.status !== 'success') {
                     try {
                         const statusObj = JSON.parse(entry.status);
-                        if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
+                        const code = statusObj.error && statusObj.error.code;
+                        if (code !== undefined && ignoredErrorCodes.includes(Number(code))) {
+                            // Skip ignored error codes
+                            return;
+                        }
+                        if (code && code.toString().startsWith('-69')) {
                             nWarningCacheRequestsLastHour++;
                         } else {
                             nErrorCacheRequestsLastHour++;
@@ -494,7 +515,12 @@ function getDashboardMetrics() {
             if (entry.status !== 'success') {
                 try {
                     const statusObj = JSON.parse(entry.status);
-                    if (statusObj.error && statusObj.error.code && statusObj.error.code.toString().startsWith('-69')) {
+                    const code = statusObj.error && statusObj.error.code;
+                    if (code !== undefined && ignoredErrorCodes.includes(Number(code))) {
+                        // Skip ignored error codes
+                        return;
+                    }
+                    if (code && code.toString().startsWith('-69')) {
                         nWarningPoolRequestsLastHour++;
                     } else {
                         nErrorPoolRequestsLastHour++;
