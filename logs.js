@@ -715,17 +715,16 @@ function calculateNodeTimingMetrics() {
 
 function parsePoolNodeTimingLog(logPath) {
     try {
+        poolNodesTimingMap.clear(); // Clear previous data to prevent memory leak
         const fileContent = fs.readFileSync(logPath, 'utf8');
         const lines = fileContent.trim().split('\n');
         let newEntriesCount = 0;
         
         lines.forEach((line) => {
             const [, , nodeId, , , , duration] = line.split('|');
-            
             if (!poolNodesTimingMap.has(nodeId)) {
                 poolNodesTimingMap.set(nodeId, []);
             }
-            
             poolNodesTimingMap.get(nodeId).push(parseFloat(duration));
             newEntriesCount++;
         });
