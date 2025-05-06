@@ -347,6 +347,11 @@ function updateRequestHistory() {
             
             const hourData = requestHistory.get(entryHour);
             
+            // Only count non-buidlguidl-client cache requests for nCacheRequests* fields
+            if (prefix === 'cache' && entry.requester === 'buidlguidl-client') {
+                return;
+            }
+
             if (entry.status === 'success') {
                 hourData[`n${prefix.charAt(0).toUpperCase() + prefix.slice(1)}RequestsSuccess`]++;
             } else {
