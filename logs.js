@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const readline = require('readline');
 
 const fallbackRequestsMap = new Map();
 const cacheRequestsMap = new Map();
@@ -9,7 +10,7 @@ const poolNodesMap = new Map();
 const poolNodesTimingMap = new Map();
 const poolCompareResultsMap = new Map();
 
-const {logPort, maxLogEntries, parseInterval, poolNodeTimingParseInterval } = require('./config');
+const {logPort, maxLogEntries, parseInterval, poolNodeTimingParseInterval, maxRequestHistoryHours } = require('./config');
 const { ignoredErrorCodes } = require('../shared/ignoredErrorCodes');
 
 // Track last processed line index for each file
@@ -56,57 +57,46 @@ function calculatePercentiles(values, percentiles) {
     return results;
 }
 
-function parseLogFile(logPath, targetMap, logType) {
+// Efficient, incremental log parsing for all log types
+async function parseLogFile(logPath, targetMap, logType) {
     try {
-        const fileContent = fs.readFileSync(logPath, 'utf8');
-        const lines = fileContent.trim().split('\n');
+        let currentLine = 0;
         let newEntriesCount = 0;
-        
-        // Calculate start and end indexes for processing
-        const totalLines = lines.length;
-        const oldestAllowedIndex = Math.max(0, totalLines - maxLogEntries);
         const lastProcessedIndex = lastProcessedIndexes[logType];
-        
-        // If we need to start fresh due to rotation or first run
-        if (lastProcessedIndex >= totalLines || lastProcessedIndex < oldestAllowedIndex - 1) {
-            targetMap.clear();
-            lastProcessedIndexes[logType] = oldestAllowedIndex - 1;
-        }
-        
-        // Process only new lines, starting from the last processed index
-        const startIndex = Math.max(oldestAllowedIndex, lastProcessedIndex + 1);
-        const newLines = lines.slice(startIndex);
-        
-        newLines.forEach((line, index) => {
-            const [timestamp, epoch, requester, method, params, elapsed, status] = line.split('|');
-            const absoluteIndex = startIndex + index;
-            
-            // Use both epoch and absolute line index to create a unique key
-            const key = `${epoch}-${absoluteIndex}`;
-            
-            targetMap.set(key, {
-                timestamp,
-                epoch,
-                requester: requester || '',
-                method,
-                params,
-                elapsed: parseFloat(elapsed),
-                status,
-                lineIndex: absoluteIndex
+        await new Promise((resolve, reject) => {
+            const rl = readline.createInterface({
+                input: fs.createReadStream(logPath),
+                crlfDelay: Infinity
             });
-            newEntriesCount++;
-            lastProcessedIndexes[logType] = absoluteIndex;
+            rl.on('line', (line) => {
+                if (currentLine > lastProcessedIndex) {
+                    const [timestamp, epoch, requester, method, params, elapsed, status] = line.split('|');
+                    const key = `${epoch}-${currentLine}`;
+                    targetMap.set(key, {
+                        timestamp,
+                        epoch,
+                        requester: requester || '',
+                        method,
+                        params,
+                        elapsed: parseFloat(elapsed),
+                        status,
+                        lineIndex: currentLine
+                    });
+                    newEntriesCount++;
+                    lastProcessedIndexes[logType] = currentLine;
+                }
+                currentLine++;
+            });
+            rl.on('close', resolve);
+            rl.on('error', reject);
         });
-        
-        // Remove entries that are too old
+        // Prune oldest entries if needed
         if (targetMap.size > maxLogEntries) {
             const entriesToRemove = Array.from(targetMap.entries())
                 .sort((a, b) => a[1].lineIndex - b[1].lineIndex)
                 .slice(0, targetMap.size - maxLogEntries);
-            
             entriesToRemove.forEach(([key]) => targetMap.delete(key));
         }
-        
         if (newEntriesCount > 0) {
             const mapName = targetMap === fallbackRequestsMap ? 'fallbackRequestsMap' : targetMap === cacheRequestsMap ? 'cacheRequestsMap' : 'poolRequestsMap';
             console.log(`Added ${newEntriesCount} new entries to ${mapName}. Total entries: ${targetMap.size}`);
@@ -117,58 +107,46 @@ function parseLogFile(logPath, targetMap, logType) {
     }
 }
 
-function parsePoolNodeLog(logPath, targetMap) {
+async function parsePoolNodeLog(logPath, targetMap) {
     try {
-        const fileContent = fs.readFileSync(logPath, 'utf8');
-        const lines = fileContent.trim().split('\n');
+        let currentLine = 0;
         let newEntriesCount = 0;
-        
-        // Calculate start and end indexes for processing
-        const totalLines = lines.length;
-        const oldestAllowedIndex = Math.max(0, totalLines - maxLogEntries);
         const lastProcessedIndex = lastProcessedIndexes.poolNodes;
-        
-        // If we need to start fresh due to rotation or first run
-        if (lastProcessedIndex >= totalLines || lastProcessedIndex < oldestAllowedIndex - 1) {
-            targetMap.clear();
-            lastProcessedIndexes.poolNodes = oldestAllowedIndex - 1;
-        }
-        
-        // Process only new lines, starting from the last processed index
-        const startIndex = Math.max(oldestAllowedIndex, lastProcessedIndex + 1);
-        const newLines = lines.slice(startIndex);
-        
-        newLines.forEach((line, index) => {
-            const [timestamp, epoch, nodeId, owner, method, params, duration, status] = line.split('|');
-            const absoluteIndex = startIndex + index;
-            
-            // Create a composite key using epoch, nodeId and absolute line index
-            const key = `${epoch}-${nodeId}-${absoluteIndex}`;
-            
-            targetMap.set(key, {
-                timestamp,
-                epoch,
-                nodeId,
-                owner,
-                method,
-                params,
-                duration: parseFloat(duration),
-                status,
-                lineIndex: absoluteIndex
+        await new Promise((resolve, reject) => {
+            const rl = readline.createInterface({
+                input: fs.createReadStream(logPath),
+                crlfDelay: Infinity
             });
-            newEntriesCount++;
-            lastProcessedIndexes.poolNodes = absoluteIndex;
+            rl.on('line', (line) => {
+                if (currentLine > lastProcessedIndex) {
+                    const [timestamp, epoch, nodeId, owner, method, params, duration, status] = line.split('|');
+                    const key = `${epoch}-${nodeId}-${currentLine}`;
+                    targetMap.set(key, {
+                        timestamp,
+                        epoch,
+                        nodeId,
+                        owner,
+                        method,
+                        params,
+                        duration: parseFloat(duration),
+                        status,
+                        lineIndex: currentLine
+                    });
+                    newEntriesCount++;
+                    lastProcessedIndexes.poolNodes = currentLine;
+                }
+                currentLine++;
+            });
+            rl.on('close', resolve);
+            rl.on('error', reject);
         });
-        
-        // Remove entries that are too old
+        // Prune oldest entries if needed
         if (targetMap.size > maxLogEntries) {
             const entriesToRemove = Array.from(targetMap.entries())
                 .sort((a, b) => a[1].lineIndex - b[1].lineIndex)
                 .slice(0, targetMap.size - maxLogEntries);
-            
             entriesToRemove.forEach(([key]) => targetMap.delete(key));
         }
-        
         if (newEntriesCount > 0) {
             console.log(`Added ${newEntriesCount} new entries to poolNodesMap. Total entries: ${targetMap.size}`);
         }
@@ -177,87 +155,65 @@ function parsePoolNodeLog(logPath, targetMap) {
     }
 }
 
-function parsePoolCompareResultsLog(logPath, targetMap) {
+async function parsePoolCompareResultsLog(logPath, targetMap) {
     try {
-        const fileContent = fs.readFileSync(logPath, 'utf8');
-        const lines = fileContent.trim().split('\n');
+        let currentLine = 0;
         let newEntriesCount = 0;
-        
-        // Process the entire file - no line limit for mismatched results
         const lastProcessedIndex = lastProcessedIndexes.poolCompareResults;
-        
-        // First run or log rotation case
-        if (lastProcessedIndex >= lines.length) {
-            lastProcessedIndexes.poolCompareResults = -1;
-        }
-        
-        // Process all new lines since last check
-        const startIndex = lastProcessedIndex + 1;
-        const newLines = lines.slice(startIndex);
-        
-        // Array to hold mismatched entries
+        // Keep existing mismatched entries
         const mismatchedEntries = [];
-        
-        // First, keep existing mismatched entries
         targetMap.forEach((value, key) => {
             if (!value.resultsMatch) {
                 mismatchedEntries.push({ key, value });
             }
         });
-        
-        // Helper function to parse and categorize an entry
-        const parseEntry = (line, absoluteIndex) => {
-            const [
-                timestamp, epoch, resultsMatch, mismatchedNode, mismatchedOwner, 
-                mismatchedResults, nodeId1, nodeResult1, nodeId2, nodeResult2, 
-                nodeId3, nodeResult3, method, params
-            ] = line.split('|');
-            
-            // Skip if results match - we only want mismatches
-            if (resultsMatch === 'true') {
-                return;
-            }
-            
-            // Create a composite key using epoch and absolute line index
-            const key = `${epoch}-${absoluteIndex}`;
-            
-            // Parse mismatchedResults from string to array, handling empty case
-            const parsedMismatchedResults = mismatchedResults === '[]' ? 
-                [] : 
-                JSON.parse(mismatchedResults);
-            
-            const entry = {
-                key,
-                value: {
-                    timestamp,
-                    epoch,
-                    resultsMatch: false,
-                    mismatchedNode: mismatchedNode === 'nan' ? null : mismatchedNode,
-                    mismatchedOwner: mismatchedOwner === 'nan' ? null : mismatchedOwner,
-                    mismatchedResults: parsedMismatchedResults,
-                    nodeId1,
-                    nodeResult1: JSON.parse(nodeResult1),
-                    nodeId2,
-                    nodeResult2: JSON.parse(nodeResult2),
-                    nodeId3,
-                    nodeResult3: JSON.parse(nodeResult3),
-                    method,
-                    params,
-                    lineIndex: absoluteIndex
+        await new Promise((resolve, reject) => {
+            const rl = readline.createInterface({
+                input: fs.createReadStream(logPath),
+                crlfDelay: Infinity
+            });
+            rl.on('line', (line) => {
+                if (currentLine > lastProcessedIndex) {
+                    const [
+                        timestamp, epoch, resultsMatch, mismatchedNode, mismatchedOwner, 
+                        mismatchedResults, nodeId1, nodeResult1, nodeId2, nodeResult2, 
+                        nodeId3, nodeResult3, method, params
+                    ] = line.split('|');
+                    if (resultsMatch === 'true') {
+                        currentLine++;
+                        return;
+                    }
+                    const key = `${epoch}-${currentLine}`;
+                    const parsedMismatchedResults = mismatchedResults === '[]' ? [] : JSON.parse(mismatchedResults);
+                    const entry = {
+                        key,
+                        value: {
+                            timestamp,
+                            epoch,
+                            resultsMatch: false,
+                            mismatchedNode: mismatchedNode === 'nan' ? null : mismatchedNode,
+                            mismatchedOwner: mismatchedOwner === 'nan' ? null : mismatchedOwner,
+                            mismatchedResults: parsedMismatchedResults,
+                            nodeId1,
+                            nodeResult1: JSON.parse(nodeResult1),
+                            nodeId2,
+                            nodeResult2: JSON.parse(nodeResult2),
+                            nodeId3,
+                            nodeResult3: JSON.parse(nodeResult3),
+                            method,
+                            params,
+                            lineIndex: currentLine
+                        }
+                    };
+                    mismatchedEntries.push(entry);
+                    newEntriesCount++;
+                    lastProcessedIndexes.poolCompareResults = currentLine;
                 }
-            };
-            
-            mismatchedEntries.push(entry);
-            newEntriesCount++;
-        };
-        
-        // Process new lines
-        newLines.forEach((line, index) => {
-            const absoluteIndex = startIndex + index;
-            parseEntry(line, absoluteIndex);
-            lastProcessedIndexes.poolCompareResults = absoluteIndex;
+                currentLine++;
+            });
+            rl.on('close', resolve);
+            rl.on('error', reject);
         });
-        
         // Sort mismatched entries by timestamp (newest first)
         mismatchedEntries.sort((a, b) => {
             const timeA = new Date(a.value.timestamp).getTime();
@@ -267,20 +223,49 @@ function parsePoolCompareResultsLog(logPath, targetMap) {
             }
             return b.value.lineIndex - a.value.lineIndex;
         });
-        
-        // Clear the map
+        // Clear and re-add only mismatched entries
         targetMap.clear();
-        
-        // Add all mismatched entries to the map in sorted order
         mismatchedEntries.forEach(({key, value}) => {
             targetMap.set(key, value);
         });
-        
         if (newEntriesCount > 0) {
             console.log(`Added ${newEntriesCount} new mismatched entries to poolCompareResultsMap. Total mismatched entries: ${targetMap.size}`);
         }
     } catch (error) {
         console.error('Error parsing poolCompareResultsMap log file:', error);
+    }
+}
+
+async function parsePoolNodeTimingLog(logPath) {
+    try {
+        let currentLine = 0;
+        let newEntriesCount = 0;
+        // We want to keep all durations for each node, but only add new ones
+        await new Promise((resolve, reject) => {
+            const rl = readline.createInterface({
+                input: fs.createReadStream(logPath),
+                crlfDelay: Infinity
+            });
+            rl.on('line', (line) => {
+                if (currentLine > (poolNodesTimingMap.lastProcessedIndex || -1)) {
+                    const [, , nodeId, , , , duration] = line.split('|');
+                    if (!poolNodesTimingMap.has(nodeId)) {
+                        poolNodesTimingMap.set(nodeId, []);
+                    }
+                    poolNodesTimingMap.get(nodeId).push(parseFloat(duration));
+                    newEntriesCount++;
+                    poolNodesTimingMap.lastProcessedIndex = currentLine;
+                }
+                currentLine++;
+            });
+            rl.on('close', resolve);
+            rl.on('error', reject);
+        });
+        if (newEntriesCount > 0) {
+            console.log(`Added ${newEntriesCount} timing entries to poolNodesTimingMap. Total nodes: ${poolNodesTimingMap.size}`);
+        }
+    } catch (error) {
+        console.error('Error parsing poolNodesTimingMap log file:', error);
     }
 }
 
@@ -374,6 +359,14 @@ function updateRequestHistory() {
             }
         });
     });
+
+    // Prune old hours from requestHistory to prevent memory leak
+    if (requestHistory.size > maxRequestHistoryHours) {
+        const sortedKeys = Array.from(requestHistory.keys()).sort((a, b) => a - b);
+        for (let i = 0; i < requestHistory.size - maxRequestHistoryHours; i++) {
+            requestHistory.delete(sortedKeys[i]);
+        }
+    }
 }
 
 function getDashboardMetrics() {
@@ -713,30 +706,6 @@ function calculateNodeTimingMetrics() {
     cachedNodeTimingMetrics = result;
 }
 
-function parsePoolNodeTimingLog(logPath) {
-    try {
-        poolNodesTimingMap.clear(); // Clear previous data to prevent memory leak
-        const fileContent = fs.readFileSync(logPath, 'utf8');
-        const lines = fileContent.trim().split('\n');
-        let newEntriesCount = 0;
-        
-        lines.forEach((line) => {
-            const [, , nodeId, , , , duration] = line.split('|');
-            if (!poolNodesTimingMap.has(nodeId)) {
-                poolNodesTimingMap.set(nodeId, []);
-            }
-            poolNodesTimingMap.get(nodeId).push(parseFloat(duration));
-            newEntriesCount++;
-        });
-        
-        if (newEntriesCount > 0) {
-            console.log(`Added ${newEntriesCount} timing entries to poolNodesTimingMap. Total nodes: ${poolNodesTimingMap.size}`);
-        }
-    } catch (error) {
-        console.error('Error parsing poolNodesTimingMap log file:', error);
-    }
-}
-
 // Create HTTPS server to serve map contents
 const server = https.createServer(
   {
@@ -780,46 +749,47 @@ function updateCachedMetrics() {
     updateRequestorMetrics();
 }
 
-// Initial processing
-parseLogFile(fallbackLogPath, fallbackRequestsMap, 'fallback');
-parseLogFile(cacheLogPath, cacheRequestsMap, 'cache');
-parseLogFile(poolLogPath, poolRequestsMap, 'pool');
-parsePoolNodeLog(poolNodesLogPath, poolNodesMap);
-parsePoolNodeTimingLog(poolNodesLogPath);
-parsePoolCompareResultsLog(poolCompareResultsLogPath, poolCompareResultsMap);
+// Initial processing in an async IIFE
+(async () => {
+    await parseLogFile(fallbackLogPath, fallbackRequestsMap, 'fallback');
+    await parseLogFile(cacheLogPath, cacheRequestsMap, 'cache');
+    await parseLogFile(poolLogPath, poolRequestsMap, 'pool');
+    await parsePoolNodeLog(poolNodesLogPath, poolNodesMap);
+    await parsePoolNodeTimingLog(poolNodesLogPath);
+    await parsePoolCompareResultsLog(poolCompareResultsLogPath, poolCompareResultsMap);
 
-// Calculate initial node timing metrics after poolNodesMap is populated
-calculateNodeTimingMetrics();
+    // Calculate initial node timing metrics after poolNodesMap is populated
+    calculateNodeTimingMetrics();
 
-// Reset lastProcessedRequestorEpoch to ensure we process all entries on first run
-lastProcessedRequestorEpoch = 0;
+    // Reset lastProcessedRequestorEpoch to ensure we process all entries on first run
+    lastProcessedRequestorEpoch = 0;
 
-updateRequestHistory(); // Initial history calculation
-updateCachedMetrics();
-
-// Track the last hour we processed to detect hour changes
-let lastProcessedHour = new Date().getHours();
-
-// Keep regular dashboard metrics updates at current interval
-setInterval(() => {
-    const currentHour = new Date().getHours();
-    
-    // Check if we've crossed an hour boundary
-    if (currentHour !== lastProcessedHour) {
-        console.log(`Hour changed from ${lastProcessedHour} to ${currentHour}, updating request history...`);
-        updateRequestHistory();
-        calculateNodeTimingMetrics(); // Update node timing metrics every hour
-        lastProcessedHour = currentHour;
-    }
-    
-    parseLogFile(fallbackLogPath, fallbackRequestsMap, 'fallback');
-    parseLogFile(cacheLogPath, cacheRequestsMap, 'cache');
-    parseLogFile(poolLogPath, poolRequestsMap, 'pool');
-    parsePoolNodeLog(poolNodesLogPath, poolNodesMap);
-    parsePoolCompareResultsLog(poolCompareResultsLogPath, poolCompareResultsMap);
+    updateRequestHistory(); // Initial history calculation
     updateCachedMetrics();
-}, parseInterval);
 
-setInterval(() => {
-    parsePoolNodeTimingLog(poolNodesLogPath);
-}, poolNodeTimingParseInterval);
+    // Track the last hour we processed to detect hour changes
+    let lastProcessedHour = new Date().getHours();
+
+    // Keep regular dashboard metrics updates at current interval
+    setInterval(async () => {
+        const currentHour = new Date().getHours();
+        // Check if we've crossed an hour boundary
+        if (currentHour !== lastProcessedHour) {
+            console.log(`Hour changed from ${lastProcessedHour} to ${currentHour}, updating request history...`);
+            updateRequestHistory();
+            calculateNodeTimingMetrics(); // Update node timing metrics every hour
+            lastProcessedHour = currentHour;
+        }
+
+        await parseLogFile(fallbackLogPath, fallbackRequestsMap, 'fallback');
+        await parseLogFile(cacheLogPath, cacheRequestsMap, 'cache');
+        await parseLogFile(poolLogPath, poolRequestsMap, 'pool');
+        await parsePoolNodeLog(poolNodesLogPath, poolNodesMap);
+        await parsePoolCompareResultsLog(poolCompareResultsLogPath, poolCompareResultsMap);
+        updateCachedMetrics();
+    }, parseInterval);
+
+    setInterval(async () => {
+        await parsePoolNodeTimingLog(poolNodesLogPath);
+    }, poolNodeTimingParseInterval);
+})();
