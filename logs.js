@@ -70,12 +70,13 @@ async function parseLogFile(logPath, targetMap, logType) {
             });
             rl.on('line', (line) => {
                 if (currentLine > lastProcessedIndex) {
-                    const [timestamp, epoch, requester, method, params, elapsed, status] = line.split('|');
+                    const [timestamp, epoch, requester, ip, method, params, elapsed, status] = line.split('|');
                     const key = `${epoch}-${currentLine}`;
                     targetMap.set(key, {
                         timestamp,
                         epoch,
                         requester: requester || '',
+                        ip: ip || '',
                         method,
                         params,
                         elapsed: parseFloat(elapsed),
