@@ -685,21 +685,23 @@ function calculateNodeTimingMetrics() {
     // Process each entry in poolNodesMap
     poolNodesMap.forEach(entry => {
         const epoch = parseInt(entry.epoch);
+        const nodeId = entry.nodeId;
+        if (!nodeTimings.has(nodeId)) {
+            nodeTimings.set(nodeId, []);
+        }
         if (epoch >= oneWeekAgo) {
-            const nodeId = entry.nodeId;
-            if (!nodeTimings.has(nodeId)) {
-                nodeTimings.set(nodeId, []);
-            }
             nodeTimings.get(nodeId).push(parseFloat(entry.duration));
         }
     });
 
-    // Calculate 75th percentile for each node
+    // Calculate 75th percentile for each node, or 0 if no data in the last week
     const result = {};
     nodeTimings.forEach((durations, nodeId) => {
         if (durations.length > 0) {
             const percentiles = calculatePercentiles(durations, [75]);
             result[nodeId] = percentiles.p75;
+        } else {
+            result[nodeId] = 0;
         }
     });
 
