@@ -7,5 +7,9 @@
   "private": true,
   "scripts": {
     "start": "node logs.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.5.0",
+    "firebase": "^11.8.0"
   }
-} 
+}

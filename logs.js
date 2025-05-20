@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const readline = require('readline');
+const { doc, getDoc, setDoc } = require("firebase/firestore");
+const { db } = require('./firebase');
 
 const fallbackRequestsMap = new Map();
 const cacheRequestsMap = new Map();
@@ -708,6 +710,71 @@ function calculateNodeTimingMetrics() {
     cachedNodeTimingMetrics = result;
 }
 
+// Efficiently parse requestor URLs from log files, excluding any in the ignore list
+async function getRequestorUrls() {
+  const logPaths = [fallbackLogPath, cacheLogPath, poolLogPath];
+  const requestorSet = new Set();
+  const ignoreSet = new Set(['buidlguidl-client']);
+
+  for (const logPath of logPaths) {
+    await new Promise((resolve, reject) => {
+      const rl = readline.createInterface({
+        input: fs.createReadStream(logPath),
+        crlfDelay: Infinity
+      });
+      rl.on('line', (line) => {
+        // Only split up to the third column for efficiency
+        const parts = line.split('|', 4);
+        if (parts.length > 2) {
+          let requester = parts[2].trim();
+          // Strip http:// or https:// from the beginning
+          requester = requester.replace(/^https?:\/\//, '');
+          if (requester && !ignoreSet.has(requester)) {
+            requestorSet.add(requester);
+          }
+        }
+      });
+      rl.on('close', resolve);
+      rl.on('error', reject);
+    });
+  }
+  return Array.from(requestorSet);
+}
+
+async function writeUrlsToFirestore(urls) {    
+  try {
+    console.log("Attempting to write to Firestore with data:", { urls });
+
+    const docRef = doc(db, "urlList", "urlList");
+    const docSnap = await getDoc(docRef);
+
+    // Get existing urls or initialize as empty array
+    const existingData = docSnap.exists() ? docSnap.data() : {};
+    const existingUrls = Array.isArray(existingData.urls) ? existingData.urls : [];
+
+    // Merge arrays and remove duplicates
+    const mergedUrls = Array.from(new Set([...existingUrls, ...urls]));
+
+    // Update the document with the merged array
+    await setDoc(
+      docRef,
+      {
+        urls: mergedUrls,
+        timestamp: new Date().toISOString(),
+      },
+      { merge: true },
+    );
+    console.log("Document updated with merged URLs array.");
+  } catch (e) {
+    console.error("Error adding document: ", e);
+    if (e instanceof Error) {
+      console.error("Error name:", e.name);
+      console.error("Error message:", e.message);
+      console.error("Error stack:", e.stack);
+    }
+  }
+}
+
 // Create HTTPS server to serve map contents
 const server = https.createServer(
   {
@@ -780,6 +847,10 @@ function updateCachedMetrics() {
             console.log(`Hour changed from ${lastProcessedHour} to ${currentHour}, updating request history...`);
             updateRequestHistory();
             calculateNodeTimingMetrics(); // Update node timing metrics every hour
+
+            const allUrls = await getRequestorUrls();
+            await writeUrlsToFirestore(allUrls);
+
             lastProcessedHour = currentHour;
         }
 
@@ -794,4 +865,7 @@ function updateCachedMetrics() {
     setInterval(async () => {
         await parsePoolNodeTimingLog(poolNodesLogPath);
     }, poolNodeTimingParseInterval);
+
+    const allUrls = await getRequestorUrls();
+    await writeUrlsToFirestore(allUrls);
 })();
