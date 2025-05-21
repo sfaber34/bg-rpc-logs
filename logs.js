@@ -2,8 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const readline = require('readline');
-const { doc, getDoc, setDoc } = require("firebase/firestore");
+const { doc, getDoc, setDoc, updateDoc } = require("firebase/firestore");
 const { db } = require('./firebase');
+require('dotenv').config();
+const firebaseCollection = process.env.FIREBASE_COLLECTION;
 
 const fallbackRequestsMap = new Map();
 const cacheRequestsMap = new Map();
@@ -714,7 +716,7 @@ function calculateNodeTimingMetrics() {
 async function getRequestorUrls() {
   const logPaths = [fallbackLogPath, cacheLogPath, poolLogPath];
   const requestorSet = new Set();
-  const ignoreSet = new Set(['buidlguidl-client']);
+  const ignoreSet = new Set(['buidlguidl-client', 'stage.mainnet.rpc.buidlguidl.com', 'mainnet.rpc.buidlguidl.com']);
 
   for (const logPath of logPaths) {
     await new Promise((resolve, reject) => {
@@ -745,26 +747,31 @@ async function writeUrlsToFirestore(urls) {
   try {
     console.log("Attempting to write to Firestore with data:", { urls });
 
-    const docRef = doc(db, "urlList", "urlList");
+    const docRef = doc(db, firebaseCollection, "urlList");
     const docSnap = await getDoc(docRef);
 
-    // Get existing urls or initialize as empty array
+    // Get existing data or initialize as empty object
     const existingData = docSnap.exists() ? docSnap.data() : {};
-    const existingUrls = Array.isArray(existingData.urls) ? existingData.urls : [];
+    // Remove 'urls' array if it exists from previous structure
+    delete existingData.urls;
 
-    // Merge arrays and remove duplicates
-    const mergedUrls = Array.from(new Set([...existingUrls, ...urls]));
+    // Merge new urls into the object, each with { owner: '' } and requestsOutstanding: 0 if not present
+    let newData = { ...existingData };
+    urls.forEach(url => {
+      if (!newData[url]) {
+        newData[url] = { owner: '', requestsOutstanding: 0 };
+      } else {
+        // Only add requestsOutstanding if not present
+        if (typeof newData[url].requestsOutstanding !== 'number') {
+          newData[url].requestsOutstanding = 0;
+        }
+      }
+    });
+    // Always update timestamp
+    newData.timestamp = new Date().toISOString();
 
-    // Update the document with the merged array
-    await setDoc(
-      docRef,
-      {
-        urls: mergedUrls,
-        timestamp: new Date().toISOString(),
-      },
-      { merge: true },
-    );
-    console.log("Document updated with merged URLs array.");
+    await setDoc(docRef, newData, { merge: true });
+    console.log("Document updated with url keys and empty owner attributes.");
   } catch (e) {
     console.error("Error adding document: ", e);
     if (e instanceof Error) {
