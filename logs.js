@@ -777,7 +777,7 @@ function updateCachedMetrics() {
         const currentHour = new Date().getHours();
         // Check if we've crossed an hour boundary
         if (currentHour !== lastProcessedHour) {
-            console.log(`Hour changed from ${lastProcessedHour} to ${currentHour}, updating request history...`);
+            console.log(`Hour changed from ${lastProcessedHour} to ${currentHour}, updating request history and node timing metrics`);
             updateRequestHistory();
             calculateNodeTimingMetrics(); // Update node timing metrics every hour
             lastProcessedHour = currentHour;
