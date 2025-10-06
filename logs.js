@@ -715,24 +715,37 @@ function calculateNodeTimeoutMetrics() {
     const oneWeekAgo = Date.now() - (7 * 24 * 60 * 60 * 1000); // 1 week in milliseconds
     const nodeStats = new Map();
 
+    // Helper function to extract nodeId prefix before MAC address
+    function extractNodePrefix(fullNodeId) {
+        // MAC address pattern: XX:XX:XX:XX:XX:XX (where X is hex digit)
+        const macAddressPattern = /-[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}/;
+        const match = fullNodeId.match(macAddressPattern);
+        if (match) {
+            // Return everything before the MAC address (excluding the dash before it)
+            return fullNodeId.substring(0, match.index);
+        }
+        return fullNodeId; // Return full ID if no MAC address found
+    }
+
     // Process each entry in poolNodesMap
     poolNodesMap.forEach(entry => {
         const epoch = parseInt(entry.epoch);
         if (epoch >= oneWeekAgo) {
-            const nodeId = entry.nodeId;
+            const fullNodeId = entry.nodeId;
             const owner = entry.owner;
             const status = entry.status;
 
-            if (!nodeStats.has(nodeId)) {
-                nodeStats.set(nodeId, {
-                    nodeId,
+            // Use full nodeId as key for aggregating stats
+            if (!nodeStats.has(fullNodeId)) {
+                nodeStats.set(fullNodeId, {
+                    fullNodeId,
                     owner,
                     totalRequests: 0,
                     timeoutRequests: 0
                 });
             }
 
-            const stats = nodeStats.get(nodeId);
+            const stats = nodeStats.get(fullNodeId);
             stats.totalRequests++;
             if (status === 'timeout_error') {
                 stats.timeoutRequests++;
@@ -740,14 +753,15 @@ function calculateNodeTimeoutMetrics() {
         }
     });
 
-    // Convert to array with percentTimeoutLastWeek calculated
-    const result = Array.from(nodeStats.values()).map(stats => ({
-        nodeId: stats.nodeId,
-        owner: stats.owner,
-        percentTimeoutLastWeek: stats.totalRequests > 0 
-            ? stats.timeoutRequests / stats.totalRequests 
-            : 0
-    }));
+    // Convert to array with percentTimeoutLastWeek calculated and pretty nodeId
+    // Filter out nodes with zero requests in the last week
+    const result = Array.from(nodeStats.values())
+        .filter(stats => stats.totalRequests > 0)
+        .map(stats => ({
+            nodeId: extractNodePrefix(stats.fullNodeId),
+            owner: stats.owner,
+            percentTimeoutLastWeek: stats.timeoutRequests / stats.totalRequests
+        }));
 
     // Sort by owner then by nodeId
     result.sort((a, b) => {
