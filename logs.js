@@ -41,6 +41,9 @@ let cachedDashboardMetrics = null;
 // Cache object for node timing metrics
 let cachedNodeTimingMetrics = null;
 
+// Cache object for node timeout metrics
+let cachedNodeTimeoutMetrics = null;
+
 // Helper function to calculate percentiles
 function calculatePercentiles(values, percentiles) {
     if (values.length === 0) return {};
@@ -708,6 +711,56 @@ function calculateNodeTimingMetrics() {
     cachedNodeTimingMetrics = result;
 }
 
+function calculateNodeTimeoutMetrics() {
+    const oneWeekAgo = Date.now() - (7 * 24 * 60 * 60 * 1000); // 1 week in milliseconds
+    const nodeStats = new Map();
+
+    // Process each entry in poolNodesMap
+    poolNodesMap.forEach(entry => {
+        const epoch = parseInt(entry.epoch);
+        if (epoch >= oneWeekAgo) {
+            const nodeId = entry.nodeId;
+            const owner = entry.owner;
+            const status = entry.status;
+
+            if (!nodeStats.has(nodeId)) {
+                nodeStats.set(nodeId, {
+                    nodeId,
+                    owner,
+                    totalRequests: 0,
+                    timeoutRequests: 0
+                });
+            }
+
+            const stats = nodeStats.get(nodeId);
+            stats.totalRequests++;
+            if (status === 'timeout_error') {
+                stats.timeoutRequests++;
+            }
+        }
+    });
+
+    // Convert to array with percentTimeoutLastWeek calculated
+    const result = Array.from(nodeStats.values()).map(stats => ({
+        nodeId: stats.nodeId,
+        owner: stats.owner,
+        percentTimeoutLastWeek: stats.totalRequests > 0 
+            ? stats.timeoutRequests / stats.totalRequests 
+            : 0
+    }));
+
+    // Sort by owner then by nodeId
+    result.sort((a, b) => {
+        const ownerCompare = (a.owner || '').localeCompare(b.owner || '');
+        if (ownerCompare !== 0) {
+            return ownerCompare;
+        }
+        return (a.nodeId || '').localeCompare(b.nodeId || '');
+    });
+
+    cachedNodeTimeoutMetrics = result;
+}
+
 // Create HTTPS server to serve map contents
 const server = https.createServer(
   {
@@ -733,6 +786,8 @@ const server = https.createServer(
         res.end(JSON.stringify(cachedRequestorMetrics, null, 2));
     } else if (req.url === '/nodeTimingLastWeek') {
         res.end(JSON.stringify(cachedNodeTimingMetrics, null, 2));
+    } else if (req.url === '/nodeTimeoutPercentLastWeek') {
+        res.end(JSON.stringify(cachedNodeTimeoutMetrics, null, 2));
     } else {
         res.statusCode = 404;
         res.end(JSON.stringify({ error: 'Not found' }));
@@ -763,6 +818,9 @@ function updateCachedMetrics() {
     // Calculate initial node timing metrics after poolNodesMap is populated
     calculateNodeTimingMetrics();
 
+    // Calculate initial node timeout metrics after poolNodesMap is populated
+    calculateNodeTimeoutMetrics();
+
     // Reset lastProcessedRequestorEpoch to ensure we process all entries on first run
     lastProcessedRequestorEpoch = 0;
 
@@ -780,6 +838,7 @@ function updateCachedMetrics() {
             console.log(`Hour changed from ${lastProcessedHour} to ${currentHour}, updating request history and node timing metrics`);
             updateRequestHistory();
             calculateNodeTimingMetrics(); // Update node timing metrics every hour
+            calculateNodeTimeoutMetrics(); // Update node timeout metrics every hour
             lastProcessedHour = currentHour;
         }
 
