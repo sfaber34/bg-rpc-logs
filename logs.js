@@ -42,7 +42,8 @@ let cachedDashboardMetrics = null;
 let cachedNodeTimingMetrics = null;
 
 // Cache object for node timeout metrics
-let cachedNodeTimeoutMetrics = null;
+let cachedNodeTimeoutMetricsLastWeek = null;
+let cachedNodeTimeoutMetricsLastDay = null;
 
 // Helper function to calculate percentiles
 function calculatePercentiles(values, percentiles) {
@@ -711,8 +712,9 @@ function calculateNodeTimingMetrics() {
     cachedNodeTimingMetrics = result;
 }
 
-function calculateNodeTimeoutMetrics() {
-    const oneWeekAgo = Date.now() - (7 * 24 * 60 * 60 * 1000); // 1 week in milliseconds
+function calculateNodeTimeoutMetrics(timeframe = 'week') {
+    const daysToLookBack = timeframe === 'day' ? 1 : 7;
+    const timeAgo = Date.now() - (daysToLookBack * 24 * 60 * 60 * 1000);
     const nodeStats = new Map();
 
     // Helper function to extract nodeId prefix before MAC address
@@ -730,7 +732,7 @@ function calculateNodeTimeoutMetrics() {
     // Process each entry in poolNodesMap
     poolNodesMap.forEach(entry => {
         const epoch = parseInt(entry.epoch);
-        if (epoch >= oneWeekAgo) {
+        if (epoch >= timeAgo) {
             const fullNodeId = entry.nodeId;
             const owner = entry.owner;
             const status = entry.status;
@@ -753,26 +755,32 @@ function calculateNodeTimeoutMetrics() {
         }
     });
 
-    // Convert to array with percentTimeoutLastWeek calculated and pretty nodeId
-    // Filter out nodes with zero requests in the last week
+    // Convert to array with full nodeId, pretty nodeId, and percentTimeout
+    // Filter out nodes with zero requests in the timeframe
     const result = Array.from(nodeStats.values())
         .filter(stats => stats.totalRequests > 0)
         .map(stats => ({
-            nodeId: extractNodePrefix(stats.fullNodeId),
+            nodeId: stats.fullNodeId,
+            nodeIdPretty: extractNodePrefix(stats.fullNodeId),
             owner: stats.owner,
-            percentTimeoutLastWeek: stats.timeoutRequests / stats.totalRequests
+            percentTimeout: stats.timeoutRequests / stats.totalRequests
         }));
 
-    // Sort by owner then by nodeId
+    // Sort by owner then by nodeIdPretty
     result.sort((a, b) => {
         const ownerCompare = (a.owner || '').localeCompare(b.owner || '');
         if (ownerCompare !== 0) {
             return ownerCompare;
         }
-        return (a.nodeId || '').localeCompare(b.nodeId || '');
+        return (a.nodeIdPretty || '').localeCompare(b.nodeIdPretty || '');
     });
 
-    cachedNodeTimeoutMetrics = result;
+    // Update the appropriate cache based on timeframe
+    if (timeframe === 'day') {
+        cachedNodeTimeoutMetricsLastDay = result;
+    } else {
+        cachedNodeTimeoutMetricsLastWeek = result;
+    }
 }
 
 // Create HTTPS server to serve map contents
@@ -801,7 +809,9 @@ const server = https.createServer(
     } else if (req.url === '/nodeTimingLastWeek') {
         res.end(JSON.stringify(cachedNodeTimingMetrics, null, 2));
     } else if (req.url === '/nodeTimeoutPercentLastWeek') {
-        res.end(JSON.stringify(cachedNodeTimeoutMetrics, null, 2));
+        res.end(JSON.stringify(cachedNodeTimeoutMetricsLastWeek, null, 2));
+    } else if (req.url === '/nodeTimeoutPercentLastDay') {
+        res.end(JSON.stringify(cachedNodeTimeoutMetricsLastDay, null, 2));
     } else {
         res.statusCode = 404;
         res.end(JSON.stringify({ error: 'Not found' }));
@@ -833,7 +843,8 @@ function updateCachedMetrics() {
     calculateNodeTimingMetrics();
 
     // Calculate initial node timeout metrics after poolNodesMap is populated
-    calculateNodeTimeoutMetrics();
+    calculateNodeTimeoutMetrics('week');
+    calculateNodeTimeoutMetrics('day');
 
     // Reset lastProcessedRequestorEpoch to ensure we process all entries on first run
     lastProcessedRequestorEpoch = 0;
@@ -852,7 +863,8 @@ function updateCachedMetrics() {
             console.log(`Hour changed from ${lastProcessedHour} to ${currentHour}, updating request history and node timing metrics`);
             updateRequestHistory();
             calculateNodeTimingMetrics(); // Update node timing metrics every hour
-            calculateNodeTimeoutMetrics(); // Update node timeout metrics every hour
+            calculateNodeTimeoutMetrics('week'); // Update node timeout metrics for last week every hour
+            calculateNodeTimeoutMetrics('day'); // Update node timeout metrics for last day every hour
             lastProcessedHour = currentHour;
         }
 
