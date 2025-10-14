@@ -294,7 +294,7 @@ function getMapContents(targetMap) {
 
 function getStartOfHour(timestamp) {
     const date = new Date(parseInt(timestamp));
-    date.setMinutes(0, 0, 0);
+    date.setUTCMinutes(0, 0, 0);
     return date.getTime();
 }
 
