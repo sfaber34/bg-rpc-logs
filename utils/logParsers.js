@@ -442,6 +442,19 @@ async function parsePoolNodeTimingLog(logPath, poolNodesTimingMap) {
     try {
         let currentLine = 0;
         let newEntriesCount = 0;
+        
+        // Check if file exists and get its size
+        const stats = await fs.promises.stat(logPath);
+        
+        // Detect if file was truncated or rotated
+        // If lastProcessedIndex is greater than total lines, we need to reset
+        const totalLines = await countLines(logPath);
+        if (poolNodesTimingMap.lastProcessedIndex && poolNodesTimingMap.lastProcessedIndex >= totalLines) {
+            console.log('poolNodesTimingMap: Log file was rotated or truncated, clearing map and re-reading');
+            poolNodesTimingMap.clear();
+            poolNodesTimingMap.lastProcessedIndex = -1;
+        }
+        
         // We want to keep all durations for each node, but only add new ones
         await new Promise((resolve, reject) => {
             const rl = readline.createInterface({
@@ -450,12 +463,27 @@ async function parsePoolNodeTimingLog(logPath, poolNodesTimingMap) {
             });
             rl.on('line', (line) => {
                 if (currentLine > (poolNodesTimingMap.lastProcessedIndex || -1)) {
-                    const [, , nodeId, , , , duration] = line.split('|');
-                    if (!poolNodesTimingMap.has(nodeId)) {
-                        poolNodesTimingMap.set(nodeId, []);
+                    // Validate line has content and proper format
+                    if (line.trim()) {
+                        const parts = line.split('|');
+                        // Validate we have at least 7 fields (timestamp, epoch, nodeId, owner, method, params, duration)
+                        if (parts.length >= 7) {
+                            const [, , nodeId, , , , duration] = parts;
+                            // Validate nodeId doesn't look like an epoch timestamp
+                            // Epoch timestamps are 13 digits (milliseconds since 1970)
+                            // NodeIds should be longer strings with hyphens and special chars
+                            if (nodeId && nodeId.trim() && !/^\d{13}$/.test(nodeId.trim())) {
+                                if (!poolNodesTimingMap.has(nodeId)) {
+                                    poolNodesTimingMap.set(nodeId, []);
+                                }
+                                const durationValue = parseFloat(duration);
+                                if (!isNaN(durationValue)) {
+                                    poolNodesTimingMap.get(nodeId).push(durationValue);
+                                    newEntriesCount++;
+                                }
+                            }
+                        }
                     }
-                    poolNodesTimingMap.get(nodeId).push(parseFloat(duration));
-                    newEntriesCount++;
                     poolNodesTimingMap.lastProcessedIndex = currentLine;
                 }
                 currentLine++;
