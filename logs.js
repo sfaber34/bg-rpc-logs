@@ -392,6 +392,10 @@ async function parsePoolCompareResultsLog(logPath, targetMap) {
                         mismatchedResults, nodeId1, nodeResult1, nodeId2, nodeResult2, 
                         nodeId3, nodeResult3, method, params
                     ] = line.split('|');
+                    
+                    // Always update the last processed index, regardless of match/mismatch
+                    lastProcessedIndexes.poolCompareResults = currentLine;
+                    
                     if (resultsMatch === 'true') {
                         currentLine++;
                         return;
@@ -420,7 +424,6 @@ async function parsePoolCompareResultsLog(logPath, targetMap) {
                     };
                     mismatchedEntries.push(entry);
                     newEntriesCount++;
-                    lastProcessedIndexes.poolCompareResults = currentLine;
                 }
                 currentLine++;
             });
