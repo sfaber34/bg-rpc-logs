@@ -109,7 +109,6 @@ function calculatePercentiles(values, percentiles) {
 // Efficient, incremental log parsing for all log types
 async function parseLogFile(logPath, targetMap, logType) {
     try {
-        let currentLine = 0;
         let newEntriesCount = 0;
         const lastProcessedIndex = lastProcessedIndexes[logType];
         
@@ -149,6 +148,8 @@ async function parseLogFile(logPath, targetMap, logType) {
             startByte = 0;
         }
         
+        // Initialize currentLine to startLine since we're reading from that position
+        let currentLine = startLine;
         let currentByte = startByte;
         let lineBuffer = '';
         
@@ -165,7 +166,7 @@ async function parseLogFile(logPath, targetMap, logType) {
                 lineBuffer = lines.pop() || '';
                 
                 for (const line of lines) {
-                    if (line.trim() && currentLine >= startLine) {
+                    if (line.trim()) {
                         const [timestamp, epoch, requester, method, params, elapsed, status] = line.split('|');
                         const key = `${epoch}-${currentLine}`;
                         targetMap.set(key, {
@@ -188,7 +189,7 @@ async function parseLogFile(logPath, targetMap, logType) {
             
             stream.on('end', () => {
                 // Process last line if exists
-                if (lineBuffer.trim() && currentLine >= startLine) {
+                if (lineBuffer.trim()) {
                     const line = lineBuffer;
                     const [timestamp, epoch, requester, method, params, elapsed, status] = line.split('|');
                     const key = `${epoch}-${currentLine}`;
@@ -233,7 +234,6 @@ async function parseLogFile(logPath, targetMap, logType) {
 
 async function parsePoolNodeLog(logPath, targetMap) {
     try {
-        let currentLine = 0;
         let newEntriesCount = 0;
         const lastProcessedIndex = lastProcessedIndexes.poolNodes;
         
@@ -273,6 +273,8 @@ async function parsePoolNodeLog(logPath, targetMap) {
             startByte = 0;
         }
         
+        // Initialize currentLine to startLine since we're reading from that position
+        let currentLine = startLine;
         let currentByte = startByte;
         let lineBuffer = '';
         
@@ -289,7 +291,7 @@ async function parsePoolNodeLog(logPath, targetMap) {
                 lineBuffer = lines.pop() || '';
                 
                 for (const line of lines) {
-                    if (line.trim() && currentLine >= startLine) {
+                    if (line.trim()) {
                         const [timestamp, epoch, nodeId, owner, method, params, duration, status] = line.split('|');
                         const key = `${epoch}-${nodeId}-${currentLine}`;
                         targetMap.set(key, {
@@ -313,7 +315,7 @@ async function parsePoolNodeLog(logPath, targetMap) {
             
             stream.on('end', () => {
                 // Process last line if exists
-                if (lineBuffer.trim() && currentLine >= startLine) {
+                if (lineBuffer.trim()) {
                     const line = lineBuffer;
                     const [timestamp, epoch, nodeId, owner, method, params, duration, status] = line.split('|');
                     const key = `${epoch}-${nodeId}-${currentLine}`;
