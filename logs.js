@@ -14,6 +14,42 @@ const poolCompareResultsMap = new Map();
 const {logPort, maxLogEntries, parseInterval, poolNodeTimingParseInterval, maxRequestHistoryHours } = require('./config');
 const { ignoredErrorCodes } = require('../shared/ignoredErrorCodes');
 
+// Helper function to count lines in a file efficiently
+async function countLines(filePath) {
+    return new Promise((resolve, reject) => {
+        let lineCount = 0;
+        const rl = readline.createInterface({
+            input: fs.createReadStream(filePath),
+            crlfDelay: Infinity
+        });
+        rl.on('line', () => lineCount++);
+        rl.on('close', () => resolve(lineCount));
+        rl.on('error', reject);
+    });
+}
+
+// Helper function to get byte offset for a specific line number
+async function getByteOffsetForLine(filePath, targetLine) {
+    return new Promise((resolve, reject) => {
+        let currentLine = 0;
+        let byteOffset = 0;
+        const rl = readline.createInterface({
+            input: fs.createReadStream(filePath),
+            crlfDelay: Infinity
+        });
+        rl.on('line', (line) => {
+            if (currentLine >= targetLine) {
+                rl.close();
+                return;
+            }
+            byteOffset += Buffer.byteLength(line + '\n', 'utf8');
+            currentLine++;
+        });
+        rl.on('close', () => resolve(byteOffset));
+        rl.on('error', reject);
+    });
+}
+
 // Track last processed line index for each file
 const lastProcessedIndexes = {
     fallback: -1,
@@ -26,6 +62,11 @@ const lastProcessedIndexes = {
 
 // Track byte offsets for efficient incremental reading
 const lastByteOffsets = {
+    fallback: 0,
+    cache: 0,
+    pool: 0,
+    poolNodes: 0,
+    poolCompareResults: 0,
     poolNodesTimeout: 0
 };
 
@@ -71,13 +112,84 @@ async function parseLogFile(logPath, targetMap, logType) {
         let currentLine = 0;
         let newEntriesCount = 0;
         const lastProcessedIndex = lastProcessedIndexes[logType];
+        
+        // On first run, count total lines and only read the last maxLogEntries
+        let startLine = 0;
+        let startByte = 0;
+        
+        if (lastProcessedIndex === -1) {
+            // First run - need to find where to start
+            const totalLines = await countLines(logPath);
+            if (totalLines > maxLogEntries) {
+                startLine = totalLines - maxLogEntries;
+                console.log(`${logType}: Skipping first ${startLine} lines, reading last ${maxLogEntries} entries from ${totalLines} total lines`);
+                // Calculate byte offset to start from
+                startByte = await getByteOffsetForLine(logPath, startLine);
+            }
+        } else {
+            // Subsequent runs - start from where we left off
+            startLine = lastProcessedIndex + 1;
+            startByte = lastByteOffsets[logType];
+        }
+        
+        // Check if file exists and get its size
+        const stats = await fs.promises.stat(logPath);
+        if (stats.size === startByte) {
+            // No new data
+            return;
+        }
+        
+        // If file was truncated or is smaller than our offset, reset
+        if (stats.size < startByte) {
+            console.log(`${logType}: Log file was rotated or truncated, re-reading from start`);
+            targetMap.clear();
+            lastProcessedIndexes[logType] = -1;
+            lastByteOffsets[logType] = 0;
+            startLine = 0;
+            startByte = 0;
+        }
+        
+        let currentByte = startByte;
+        let lineBuffer = '';
+        
         await new Promise((resolve, reject) => {
-            const rl = readline.createInterface({
-                input: fs.createReadStream(logPath),
-                crlfDelay: Infinity
+            const stream = fs.createReadStream(logPath, {
+                start: startByte,
+                encoding: 'utf8'
             });
-            rl.on('line', (line) => {
-                if (currentLine > lastProcessedIndex) {
+            
+            stream.on('data', (chunk) => {
+                lineBuffer += chunk;
+                const lines = lineBuffer.split('\n');
+                // Keep the last incomplete line in buffer
+                lineBuffer = lines.pop() || '';
+                
+                for (const line of lines) {
+                    if (line.trim() && currentLine >= startLine) {
+                        const [timestamp, epoch, requester, method, params, elapsed, status] = line.split('|');
+                        const key = `${epoch}-${currentLine}`;
+                        targetMap.set(key, {
+                            timestamp,
+                            epoch,
+                            requester: requester || '',
+                            method,
+                            params,
+                            elapsed: parseFloat(elapsed),
+                            status,
+                            lineIndex: currentLine
+                        });
+                        newEntriesCount++;
+                        lastProcessedIndexes[logType] = currentLine;
+                    }
+                    currentLine++;
+                    currentByte += Buffer.byteLength(line + '\n', 'utf8');
+                }
+            });
+            
+            stream.on('end', () => {
+                // Process last line if exists
+                if (lineBuffer.trim() && currentLine >= startLine) {
+                    const line = lineBuffer;
                     const [timestamp, epoch, requester, method, params, elapsed, status] = line.split('|');
                     const key = `${epoch}-${currentLine}`;
                     targetMap.set(key, {
@@ -92,12 +204,15 @@ async function parseLogFile(logPath, targetMap, logType) {
                     });
                     newEntriesCount++;
                     lastProcessedIndexes[logType] = currentLine;
+                    currentByte += Buffer.byteLength(line + '\n', 'utf8');
                 }
-                currentLine++;
+                lastByteOffsets[logType] = currentByte;
+                resolve();
             });
-            rl.on('close', resolve);
-            rl.on('error', reject);
+            
+            stream.on('error', reject);
         });
+        
         // Prune oldest entries if needed
         if (targetMap.size > maxLogEntries) {
             const entriesToRemove = Array.from(targetMap.entries())
@@ -105,6 +220,7 @@ async function parseLogFile(logPath, targetMap, logType) {
                 .slice(0, targetMap.size - maxLogEntries);
             entriesToRemove.forEach(([key]) => targetMap.delete(key));
         }
+        
         if (newEntriesCount > 0) {
             const mapName = targetMap === fallbackRequestsMap ? 'fallbackRequestsMap' : targetMap === cacheRequestsMap ? 'cacheRequestsMap' : 'poolRequestsMap';
             console.log(`Added ${newEntriesCount} new entries to ${mapName}. Total entries: ${targetMap.size}`);
@@ -120,13 +236,85 @@ async function parsePoolNodeLog(logPath, targetMap) {
         let currentLine = 0;
         let newEntriesCount = 0;
         const lastProcessedIndex = lastProcessedIndexes.poolNodes;
+        
+        // On first run, count total lines and only read the last maxLogEntries
+        let startLine = 0;
+        let startByte = 0;
+        
+        if (lastProcessedIndex === -1) {
+            // First run - need to find where to start
+            const totalLines = await countLines(logPath);
+            if (totalLines > maxLogEntries) {
+                startLine = totalLines - maxLogEntries;
+                console.log(`poolNodes: Skipping first ${startLine} lines, reading last ${maxLogEntries} entries from ${totalLines} total lines`);
+                // Calculate byte offset to start from
+                startByte = await getByteOffsetForLine(logPath, startLine);
+            }
+        } else {
+            // Subsequent runs - start from where we left off
+            startLine = lastProcessedIndex + 1;
+            startByte = lastByteOffsets.poolNodes;
+        }
+        
+        // Check if file exists and get its size
+        const stats = await fs.promises.stat(logPath);
+        if (stats.size === startByte) {
+            // No new data
+            return;
+        }
+        
+        // If file was truncated or is smaller than our offset, reset
+        if (stats.size < startByte) {
+            console.log(`poolNodes: Log file was rotated or truncated, re-reading from start`);
+            targetMap.clear();
+            lastProcessedIndexes.poolNodes = -1;
+            lastByteOffsets.poolNodes = 0;
+            startLine = 0;
+            startByte = 0;
+        }
+        
+        let currentByte = startByte;
+        let lineBuffer = '';
+        
         await new Promise((resolve, reject) => {
-            const rl = readline.createInterface({
-                input: fs.createReadStream(logPath),
-                crlfDelay: Infinity
+            const stream = fs.createReadStream(logPath, {
+                start: startByte,
+                encoding: 'utf8'
             });
-            rl.on('line', (line) => {
-                if (currentLine > lastProcessedIndex) {
+            
+            stream.on('data', (chunk) => {
+                lineBuffer += chunk;
+                const lines = lineBuffer.split('\n');
+                // Keep the last incomplete line in buffer
+                lineBuffer = lines.pop() || '';
+                
+                for (const line of lines) {
+                    if (line.trim() && currentLine >= startLine) {
+                        const [timestamp, epoch, nodeId, owner, method, params, duration, status] = line.split('|');
+                        const key = `${epoch}-${nodeId}-${currentLine}`;
+                        targetMap.set(key, {
+                            timestamp,
+                            epoch,
+                            nodeId,
+                            owner,
+                            method,
+                            params,
+                            duration: parseFloat(duration),
+                            status,
+                            lineIndex: currentLine
+                        });
+                        newEntriesCount++;
+                        lastProcessedIndexes.poolNodes = currentLine;
+                    }
+                    currentLine++;
+                    currentByte += Buffer.byteLength(line + '\n', 'utf8');
+                }
+            });
+            
+            stream.on('end', () => {
+                // Process last line if exists
+                if (lineBuffer.trim() && currentLine >= startLine) {
+                    const line = lineBuffer;
                     const [timestamp, epoch, nodeId, owner, method, params, duration, status] = line.split('|');
                     const key = `${epoch}-${nodeId}-${currentLine}`;
                     targetMap.set(key, {
@@ -142,12 +330,15 @@ async function parsePoolNodeLog(logPath, targetMap) {
                     });
                     newEntriesCount++;
                     lastProcessedIndexes.poolNodes = currentLine;
+                    currentByte += Buffer.byteLength(line + '\n', 'utf8');
                 }
-                currentLine++;
+                lastByteOffsets.poolNodes = currentByte;
+                resolve();
             });
-            rl.on('close', resolve);
-            rl.on('error', reject);
+            
+            stream.on('error', reject);
         });
+        
         // Prune oldest entries if needed
         if (targetMap.size > maxLogEntries) {
             const entriesToRemove = Array.from(targetMap.entries())
@@ -155,6 +346,7 @@ async function parsePoolNodeLog(logPath, targetMap) {
                 .slice(0, targetMap.size - maxLogEntries);
             entriesToRemove.forEach(([key]) => targetMap.delete(key));
         }
+        
         if (newEntriesCount > 0) {
             console.log(`Added ${newEntriesCount} new entries to poolNodesMap. Total entries: ${targetMap.size}`);
         }
@@ -168,6 +360,7 @@ async function parsePoolCompareResultsLog(logPath, targetMap) {
         let currentLine = 0;
         let newEntriesCount = 0;
         const lastProcessedIndex = lastProcessedIndexes.poolCompareResults;
+        
         // Keep existing mismatched entries
         const mismatchedEntries = [];
         targetMap.forEach((value, key) => {
@@ -175,13 +368,23 @@ async function parsePoolCompareResultsLog(logPath, targetMap) {
                 mismatchedEntries.push({ key, value });
             }
         });
+        
+        // On first run, count total lines to optimize reading (though we only keep mismatches)
+        let startLine = lastProcessedIndex + 1;
+        if (lastProcessedIndex === -1) {
+            const totalLines = await countLines(logPath);
+            // For this log we can't skip lines since we need to filter mismatches,
+            // but we log it for visibility
+            console.log(`poolCompareResults: Scanning ${totalLines} total lines for mismatches`);
+        }
+        
         await new Promise((resolve, reject) => {
             const rl = readline.createInterface({
                 input: fs.createReadStream(logPath),
                 crlfDelay: Infinity
             });
             rl.on('line', (line) => {
-                if (currentLine > lastProcessedIndex) {
+                if (currentLine >= startLine) {
                     const [
                         timestamp, epoch, resultsMatch, mismatchedNode, mismatchedOwner, 
                         mismatchedResults, nodeId1, nodeResult1, nodeId2, nodeResult2, 
