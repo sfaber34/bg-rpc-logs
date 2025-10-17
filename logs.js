@@ -359,7 +359,6 @@ async function parsePoolNodeLog(logPath, targetMap) {
 
 async function parsePoolCompareResultsLog(logPath, targetMap) {
     try {
-        let currentLine = 0;
         let newEntriesCount = 0;
         const lastProcessedIndex = lastProcessedIndexes.poolCompareResults;
         
@@ -371,64 +370,142 @@ async function parsePoolCompareResultsLog(logPath, targetMap) {
             }
         });
         
-        // On first run, count total lines to optimize reading (though we only keep mismatches)
-        let startLine = lastProcessedIndex + 1;
+        // On first run, calculate starting position
+        let startLine = 0;
+        let startByte = 0;
+        
         if (lastProcessedIndex === -1) {
             const totalLines = await countLines(logPath);
-            // For this log we can't skip lines since we need to filter mismatches,
-            // but we log it for visibility
-            console.log(`poolCompareResults: Scanning ${totalLines} total lines for mismatches`);
+            console.log(`poolCompareResults: Scanning ${totalLines} total lines for mismatches on initial load`);
+        } else {
+            // Subsequent runs - start from where we left off
+            startLine = lastProcessedIndex + 1;
+            startByte = lastByteOffsets.poolCompareResults;
         }
         
+        // Check if file exists and get its size
+        const stats = await fs.promises.stat(logPath);
+        if (stats.size === startByte) {
+            // No new data
+            return;
+        }
+        
+        // If file was truncated or is smaller than our offset, reset
+        if (stats.size < startByte) {
+            console.log(`poolCompareResults: Log file was rotated or truncated, re-reading from start`);
+            targetMap.clear();
+            lastProcessedIndexes.poolCompareResults = -1;
+            lastByteOffsets.poolCompareResults = 0;
+            startLine = 0;
+            startByte = 0;
+        }
+        
+        // Initialize currentLine to startLine since we're reading from that position
+        let currentLine = startLine;
+        let currentByte = startByte;
+        let lineBuffer = '';
+        
         await new Promise((resolve, reject) => {
-            const rl = readline.createInterface({
-                input: fs.createReadStream(logPath),
-                crlfDelay: Infinity
+            const stream = fs.createReadStream(logPath, {
+                start: startByte,
+                encoding: 'utf8'
             });
-            rl.on('line', (line) => {
-                if (currentLine >= startLine) {
+            
+            stream.on('data', (chunk) => {
+                lineBuffer += chunk;
+                const lines = lineBuffer.split('\n');
+                // Keep the last incomplete line in buffer
+                lineBuffer = lines.pop() || '';
+                
+                for (const line of lines) {
+                    if (line.trim()) {
+                        const [
+                            timestamp, epoch, resultsMatch, mismatchedNode, mismatchedOwner, 
+                            mismatchedResults, nodeId1, nodeResult1, nodeId2, nodeResult2, 
+                            nodeId3, nodeResult3, method, params
+                        ] = line.split('|');
+                        
+                        // Always update the last processed index
+                        lastProcessedIndexes.poolCompareResults = currentLine;
+                        
+                        // Only store mismatches
+                        if (resultsMatch === 'false') {
+                            const key = `${epoch}-${currentLine}`;
+                            const parsedMismatchedResults = mismatchedResults === '[]' ? [] : JSON.parse(mismatchedResults);
+                            const entry = {
+                                key,
+                                value: {
+                                    timestamp,
+                                    epoch,
+                                    resultsMatch: false,
+                                    mismatchedNode: mismatchedNode === 'nan' ? null : mismatchedNode,
+                                    mismatchedOwner: mismatchedOwner === 'nan' ? null : mismatchedOwner,
+                                    mismatchedResults: parsedMismatchedResults,
+                                    nodeId1,
+                                    nodeResult1: JSON.parse(nodeResult1),
+                                    nodeId2,
+                                    nodeResult2: JSON.parse(nodeResult2),
+                                    nodeId3,
+                                    nodeResult3: JSON.parse(nodeResult3),
+                                    method,
+                                    params,
+                                    lineIndex: currentLine
+                                }
+                            };
+                            mismatchedEntries.push(entry);
+                            newEntriesCount++;
+                        }
+                    }
+                    currentLine++;
+                    currentByte += Buffer.byteLength(line + '\n', 'utf8');
+                }
+            });
+            
+            stream.on('end', () => {
+                // Process last line if exists
+                if (lineBuffer.trim()) {
+                    const line = lineBuffer;
                     const [
                         timestamp, epoch, resultsMatch, mismatchedNode, mismatchedOwner, 
                         mismatchedResults, nodeId1, nodeResult1, nodeId2, nodeResult2, 
                         nodeId3, nodeResult3, method, params
                     ] = line.split('|');
                     
-                    // Always update the last processed index, regardless of match/mismatch
                     lastProcessedIndexes.poolCompareResults = currentLine;
                     
-                    if (resultsMatch === 'true') {
-                        currentLine++;
-                        return;
+                    if (resultsMatch === 'false') {
+                        const key = `${epoch}-${currentLine}`;
+                        const parsedMismatchedResults = mismatchedResults === '[]' ? [] : JSON.parse(mismatchedResults);
+                        const entry = {
+                            key,
+                            value: {
+                                timestamp,
+                                epoch,
+                                resultsMatch: false,
+                                mismatchedNode: mismatchedNode === 'nan' ? null : mismatchedNode,
+                                mismatchedOwner: mismatchedOwner === 'nan' ? null : mismatchedOwner,
+                                mismatchedResults: parsedMismatchedResults,
+                                nodeId1,
+                                nodeResult1: JSON.parse(nodeResult1),
+                                nodeId2,
+                                nodeResult2: JSON.parse(nodeResult2),
+                                nodeId3,
+                                nodeResult3: JSON.parse(nodeResult3),
+                                method,
+                                params,
+                                lineIndex: currentLine
+                            }
+                        };
+                        mismatchedEntries.push(entry);
+                        newEntriesCount++;
                     }
-                    const key = `${epoch}-${currentLine}`;
-                    const parsedMismatchedResults = mismatchedResults === '[]' ? [] : JSON.parse(mismatchedResults);
-                    const entry = {
-                        key,
-                        value: {
-                            timestamp,
-                            epoch,
-                            resultsMatch: false,
-                            mismatchedNode: mismatchedNode === 'nan' ? null : mismatchedNode,
-                            mismatchedOwner: mismatchedOwner === 'nan' ? null : mismatchedOwner,
-                            mismatchedResults: parsedMismatchedResults,
-                            nodeId1,
-                            nodeResult1: JSON.parse(nodeResult1),
-                            nodeId2,
-                            nodeResult2: JSON.parse(nodeResult2),
-                            nodeId3,
-                            nodeResult3: JSON.parse(nodeResult3),
-                            method,
-                            params,
-                            lineIndex: currentLine
-                        }
-                    };
-                    mismatchedEntries.push(entry);
-                    newEntriesCount++;
+                    currentByte += Buffer.byteLength(line + '\n', 'utf8');
                 }
-                currentLine++;
+                lastByteOffsets.poolCompareResults = currentByte;
+                resolve();
             });
-            rl.on('close', resolve);
-            rl.on('error', reject);
+            
+            stream.on('error', reject);
         });
         // Sort mismatched entries by timestamp (newest first)
         mismatchedEntries.sort((a, b) => {
