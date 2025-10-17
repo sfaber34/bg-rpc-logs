@@ -45,9 +45,6 @@ const poolCompareResultsLogPath = path.join(__dirname, '../shared/poolCompareRes
 // Cache object for dashboard metrics
 let cachedDashboardMetrics = null;
 
-// Cache object for node timing metrics
-let cachedNodeTimingMetrics = null;
-
 // Cache object for node timeout metrics
 let cachedNodeTimeoutMetricsLastWeek = null;
 let cachedNodeTimeoutMetricsLastDay = null;
@@ -793,36 +790,6 @@ function updateRequestorMetrics() {
     cachedRequestorMetrics = Object.fromEntries(requestorMetrics);
 }
 
-function calculateNodeTimingMetrics() {
-    const oneWeekAgo = Date.now() - (7 * 24 * 60 * 60 * 1000); // 1 week in milliseconds
-    const nodeTimings = new Map();
-
-    // Process each entry in poolNodesMap
-    poolNodesMap.forEach(entry => {
-        const epoch = parseInt(entry.epoch);
-        const nodeId = entry.nodeId;
-        if (!nodeTimings.has(nodeId)) {
-            nodeTimings.set(nodeId, []);
-        }
-        if (epoch >= oneWeekAgo) {
-            nodeTimings.get(nodeId).push(parseFloat(entry.duration));
-        }
-    });
-
-    // Calculate 75th percentile for each node, or 0 if no data in the last week
-    const result = {};
-    nodeTimings.forEach((durations, nodeId) => {
-        if (durations.length > 0) {
-            const percentiles = calculatePercentiles(durations, [75]);
-            result[nodeId] = percentiles.p75;
-        } else {
-            result[nodeId] = 0;
-        }
-    });
-
-    cachedNodeTimingMetrics = result;
-}
-
 function calculateNodeTimeoutMetrics(timeframe = 'week') {
     const daysToLookBack = timeframe === 'day' ? 1 : 7;
     const timeAgo = Date.now() - (daysToLookBack * 24 * 60 * 60 * 1000);
@@ -917,8 +884,6 @@ const server = https.createServer(
         res.end(JSON.stringify(cachedDashboardMetrics, null, 2));
     } else if (req.url === '/requestorTable') {
         res.end(JSON.stringify(cachedRequestorMetrics, null, 2));
-    } else if (req.url === '/nodeTimingLastWeek') {
-        res.end(JSON.stringify(cachedNodeTimingMetrics, null, 2));
     } else if (req.url === '/nodeTimeoutPercentLastWeek') {
         res.end(JSON.stringify(cachedNodeTimeoutMetricsLastWeek, null, 2));
     } else if (req.url === '/nodeTimeoutPercentLastDay') {
@@ -951,9 +916,6 @@ function updateCachedMetrics() {
     await parsePoolNodeTimeoutCache(poolNodesLogPath);
     await parsePoolCompareResultsLog(poolCompareResultsLogPath, poolCompareResultsMap);
 
-    // Calculate initial node timing metrics after poolNodesMap is populated
-    calculateNodeTimingMetrics();
-
     // Calculate initial node timeout metrics after poolNodesTimeoutCache is populated
     calculateNodeTimeoutMetrics('week');
     calculateNodeTimeoutMetrics('day');
@@ -972,9 +934,8 @@ function updateCachedMetrics() {
         const currentHour = new Date().getHours();
         // Check if we've crossed an hour boundary
         if (currentHour !== lastProcessedHour) {
-            console.log(`Hour changed from ${lastProcessedHour} to ${currentHour}, updating request history and node timing metrics`);
+            console.log(`Hour changed from ${lastProcessedHour} to ${currentHour}, updating request history and node timeout metrics`);
             updateRequestHistory();
-            calculateNodeTimingMetrics(); // Update node timing metrics every hour
             await parsePoolNodeTimeoutCache(poolNodesLogPath); // Update timeout cache every hour
             calculateNodeTimeoutMetrics('week'); // Update node timeout metrics for last week every hour
             calculateNodeTimeoutMetrics('day'); // Update node timeout metrics for last day every hour
