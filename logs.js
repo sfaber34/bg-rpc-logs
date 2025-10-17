@@ -8,6 +8,7 @@ const cacheRequestsMap = new Map();
 const poolRequestsMap = new Map();
 const poolNodesMap = new Map();
 const poolNodesTimingMap = new Map();
+const poolNodesTimeoutCache = new Map();
 const poolCompareResultsMap = new Map();
 
 const {logPort, maxLogEntries, parseInterval, poolNodeTimingParseInterval, maxRequestHistoryHours } = require('./config');
@@ -19,7 +20,13 @@ const lastProcessedIndexes = {
     cache: -1,
     pool: -1,
     poolNodes: -1,
+    poolNodesTimeout: -1,
     poolCompareResults: -1
+};
+
+// Track byte offsets for efficient incremental reading
+const lastByteOffsets = {
+    poolNodesTimeout: 0
 };
 
 // Store request history data
@@ -270,6 +277,110 @@ async function parsePoolNodeTimingLog(logPath) {
         }
     } catch (error) {
         console.error('Error parsing poolNodesTimingMap log file:', error);
+    }
+}
+
+async function parsePoolNodeTimeoutCache(logPath) {
+    try {
+        let newEntriesCount = 0;
+        const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+        const startByte = lastByteOffsets.poolNodesTimeout;
+        
+        // Check if file exists and get its size
+        const stats = await fs.promises.stat(logPath);
+        if (stats.size === startByte) {
+            // No new data, just prune old entries
+            const entriesToRemove = [];
+            poolNodesTimeoutCache.forEach((entry, key) => {
+                const entryEpoch = parseInt(entry.epoch);
+                if (entryEpoch < sevenDaysAgo) {
+                    entriesToRemove.push(key);
+                }
+            });
+            entriesToRemove.forEach(key => poolNodesTimeoutCache.delete(key));
+            if (entriesToRemove.length > 0) {
+                console.log(`Pruned ${entriesToRemove.length} old entries from poolNodesTimeoutCache. Total entries: ${poolNodesTimeoutCache.size}`);
+            }
+            return;
+        }
+        
+        // If file was truncated or is smaller than our offset, reset
+        if (stats.size < startByte) {
+            console.log('Log file was rotated or truncated, resetting poolNodesTimeoutCache');
+            poolNodesTimeoutCache.clear();
+            lastByteOffsets.poolNodesTimeout = 0;
+        }
+        
+        let currentByte = lastByteOffsets.poolNodesTimeout;
+        let lineBuffer = '';
+        
+        await new Promise((resolve, reject) => {
+            const stream = fs.createReadStream(logPath, { 
+                start: lastByteOffsets.poolNodesTimeout,
+                encoding: 'utf8'
+            });
+            
+            stream.on('data', (chunk) => {
+                lineBuffer += chunk;
+                const lines = lineBuffer.split('\n');
+                // Keep the last incomplete line in buffer
+                lineBuffer = lines.pop() || '';
+                
+                for (const line of lines) {
+                    if (line.trim()) {
+                        const [, epoch, nodeId, owner, , , , status] = line.split('|');
+                        const key = `${epoch}-${nodeId}-${currentByte}`;
+                        poolNodesTimeoutCache.set(key, {
+                            epoch,
+                            nodeId,
+                            owner,
+                            status
+                        });
+                        newEntriesCount++;
+                    }
+                    currentByte += Buffer.byteLength(line + '\n', 'utf8');
+                }
+            });
+            
+            stream.on('end', () => {
+                // Process last line if exists
+                if (lineBuffer.trim()) {
+                    const line = lineBuffer;
+                    const [, epoch, nodeId, owner, , , , status] = line.split('|');
+                    const key = `${epoch}-${nodeId}-${currentByte}`;
+                    poolNodesTimeoutCache.set(key, {
+                        epoch,
+                        nodeId,
+                        owner,
+                        status
+                    });
+                    newEntriesCount++;
+                    currentByte += Buffer.byteLength(line + '\n', 'utf8');
+                }
+                lastByteOffsets.poolNodesTimeout = currentByte;
+                resolve();
+            });
+            
+            stream.on('error', reject);
+        });
+        
+        // Prune entries older than 7 days
+        const entriesToRemove = [];
+        poolNodesTimeoutCache.forEach((entry, key) => {
+            const entryEpoch = parseInt(entry.epoch);
+            if (entryEpoch < sevenDaysAgo) {
+                entriesToRemove.push(key);
+            }
+        });
+        entriesToRemove.forEach(key => poolNodesTimeoutCache.delete(key));
+        
+        if (newEntriesCount > 0) {
+            console.log(`Added ${newEntriesCount} timeout entries to poolNodesTimeoutCache (read from byte ${startByte} to ${currentByte}). Total entries: ${poolNodesTimeoutCache.size} (pruned ${entriesToRemove.length} old entries)`);
+        } else if (entriesToRemove.length > 0) {
+            console.log(`Pruned ${entriesToRemove.length} old entries from poolNodesTimeoutCache. Total entries: ${poolNodesTimeoutCache.size}`);
+        }
+    } catch (error) {
+        console.error('Error parsing poolNodesTimeoutCache log file:', error);
     }
 }
 
@@ -729,8 +840,8 @@ function calculateNodeTimeoutMetrics(timeframe = 'week') {
         return fullNodeId; // Return full ID if no MAC address found
     }
 
-    // Process each entry in poolNodesMap
-    poolNodesMap.forEach(entry => {
+    // Process each entry in poolNodesTimeoutCache
+    poolNodesTimeoutCache.forEach(entry => {
         const epoch = parseInt(entry.epoch);
         if (epoch >= timeAgo) {
             const fullNodeId = entry.nodeId;
@@ -837,12 +948,13 @@ function updateCachedMetrics() {
     await parseLogFile(poolLogPath, poolRequestsMap, 'pool');
     await parsePoolNodeLog(poolNodesLogPath, poolNodesMap);
     await parsePoolNodeTimingLog(poolNodesLogPath);
+    await parsePoolNodeTimeoutCache(poolNodesLogPath);
     await parsePoolCompareResultsLog(poolCompareResultsLogPath, poolCompareResultsMap);
 
     // Calculate initial node timing metrics after poolNodesMap is populated
     calculateNodeTimingMetrics();
 
-    // Calculate initial node timeout metrics after poolNodesMap is populated
+    // Calculate initial node timeout metrics after poolNodesTimeoutCache is populated
     calculateNodeTimeoutMetrics('week');
     calculateNodeTimeoutMetrics('day');
 
@@ -863,6 +975,7 @@ function updateCachedMetrics() {
             console.log(`Hour changed from ${lastProcessedHour} to ${currentHour}, updating request history and node timing metrics`);
             updateRequestHistory();
             calculateNodeTimingMetrics(); // Update node timing metrics every hour
+            await parsePoolNodeTimeoutCache(poolNodesLogPath); // Update timeout cache every hour
             calculateNodeTimeoutMetrics('week'); // Update node timeout metrics for last week every hour
             calculateNodeTimeoutMetrics('day'); // Update node timeout metrics for last day every hour
             lastProcessedHour = currentHour;
