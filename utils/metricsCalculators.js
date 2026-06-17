@@ -151,6 +151,7 @@ function getDashboardMetrics(
         if (parseInt(entry.epoch) >= oneHourAgo) {
             nFallbackRequestsLastHour++;
             totalFallbackTime += entry.elapsed;
+            fallbackRequestTimesLastHour.push(entry.elapsed);
             // Check if status is not success and error code doesn't start with -69
             if (entry.status !== 'success') {
                 try {
@@ -206,6 +207,7 @@ function getDashboardMetrics(
             } else {
                 nCacheRequestsLastHour++;
                 cacheRequestTimesLastHour.push(entry.elapsed);
+                totalCacheTime += entry.elapsed;
                 if (entry.status !== 'success') {
                     try {
                         const statusObj = JSON.parse(entry.status);
@@ -225,7 +227,6 @@ function getDashboardMetrics(
                     }
                 }
             }
-            totalCacheTime += entry.elapsed;
         }
     });
 
@@ -238,6 +239,7 @@ function getDashboardMetrics(
         if (parseInt(entry.epoch) >= oneHourAgo) {
             nPoolRequestsLastHour++;
             totalPoolTime += entry.elapsed;
+            poolRequestTimesLastHour.push(entry.elapsed);
             if (entry.status !== 'success') {
                 try {
                     const statusObj = JSON.parse(entry.status);
@@ -280,31 +282,12 @@ function getDashboardMetrics(
     });
 
     // Calculate percentiles for each node using ALL timing data
+    // Use a shallow copy so calculatePercentiles doesn't sort the stored array in-place
     const nodeDurationHist = {};
     poolNodesTimingMap.forEach((times, nodeId) => {
-        nodeDurationHist[nodeId] = calculatePercentiles(times, [1, 25, 50, 75, 99]);
+        nodeDurationHist[nodeId] = calculatePercentiles(times.slice(), [1, 25, 50, 75, 99]);
     });
     
-    // Collect request times for each type of request from the last hour
-    fallbackRequestsMap.forEach(entry => {
-        if (parseInt(entry.epoch) >= oneHourAgo) {
-            fallbackRequestTimesLastHour.push(entry.elapsed);
-        }
-    });
-    
-    // Collect cache request times from the last hour
-    cacheRequestsMap.forEach(entry => {
-        if (parseInt(entry.epoch) >= oneHourAgo) {
-            cacheRequestTimesLastHour.push(entry.elapsed);
-        }
-    });
-    
-    // Collect pool request times from the last hour
-    poolRequestsMap.forEach(entry => {
-        if (parseInt(entry.epoch) >= oneHourAgo) {
-            poolRequestTimesLastHour.push(entry.elapsed);
-        }
-    });
     
     // Calculate true medians using the calculatePercentiles function
     const medFallbackRequestTimeLastHour = fallbackRequestTimesLastHour.length > 0 ? 
@@ -402,14 +385,15 @@ function updateRequestorMetrics(
     poolRequestsMap.forEach(entry => processEntry(entry, 'Pool'));
 
     // Update the last processed epoch to the latest one we've seen
-    const allEpochs = [
-        ...Array.from(fallbackRequestsMap.values()).map(e => parseInt(e.epoch)),
-        ...Array.from(cacheRequestsMap.values()).map(e => parseInt(e.epoch)),
-        ...Array.from(poolRequestsMap.values()).map(e => parseInt(e.epoch))
-    ];
-    if (allEpochs.length > 0) {
-        lastProcessedRequestorEpoch.value = Math.max(...allEpochs);
+    // NOTE: Do NOT use Math.max(...array) here — with 120k+ elements it exceeds the call stack limit
+    let maxEpoch = lastProcessedRequestorEpoch.value;
+    for (const map of [fallbackRequestsMap, cacheRequestsMap, poolRequestsMap]) {
+        map.forEach(e => {
+            const ep = parseInt(e.epoch);
+            if (ep > maxEpoch) maxEpoch = ep;
+        });
     }
+    lastProcessedRequestorEpoch.value = maxEpoch;
 
     // Convert Map to object for JSON serialization
     return Object.fromEntries(requestorMetrics);

@@ -1,6 +1,7 @@
 const fs = require('fs');
 const readline = require('readline');
 const { countLines, getByteOffsetForLine } = require('./fileUtils');
+const { maxTimingEntriesPerNode } = require('../config');
 
 /**
  * Parse a standard log file incrementally
@@ -478,7 +479,12 @@ async function parsePoolNodeTimingLog(logPath, poolNodesTimingMap) {
                                 }
                                 const durationValue = parseFloat(duration);
                                 if (!isNaN(durationValue)) {
-                                    poolNodesTimingMap.get(nodeId).push(durationValue);
+                                    const arr = poolNodesTimingMap.get(nodeId);
+                                    arr.push(durationValue);
+                                    // Trim oldest entries when array exceeds cap to prevent unbounded growth
+                                    if (arr.length > maxTimingEntriesPerNode) {
+                                        arr.splice(0, arr.length - maxTimingEntriesPerNode);
+                                    }
                                     newEntriesCount++;
                                 }
                             }
